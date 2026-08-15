@@ -9,8 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Models\" />
-    <Folder Include="ViewModels\" />
     <Folder Include="Standards\" />
     <Folder Include="Resources\" />
   </ItemGroup>

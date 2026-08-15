@@ -1,378 +1,708 @@
-﻿//using System.IO.Ports;
-//using System.Text;
-//using System.Windows;
-//using System.Windows.Controls;
-//using System.Windows.Data;
-//using System.Windows.Documents;
-//using System.Windows.Input;
-//using System.Windows.Media;
-//using System.Windows.Media.Imaging;
-//using System.Windows.Navigation;
-//using System.Windows.Shapes;
-//using UpperComInspectionInstrument2022.Communication;
-
-//namespace UpperComInspectionInstrument2022
-//{
-//    /// <summary>
-//    /// Interaction logic for MainWindow.xaml
-//    /// </summary>
-//    public partial class MainWindow : Window
-//    {
-//        public MainWindow()
-//        {
-//            InitializeComponent();
-//        }
-//    }
-//}
-
-using UpperComInspectionInstrument2022.Communication;
-using System;
+﻿using System;
 using System.IO.Ports;
 using System.Windows;
-using System.Windows.Controls;
+using UpperComInspectionInstrument2022.Communication;
+using UpperComInspectionInstrument2022.Services;
+using UpperComInspectionInstrument2022.Views;
 
 namespace UpperComInspectionInstrument2022
 {
+    /// <summary>
+    /// 工业设备校准系统主窗口
+    /// </summary>
     public partial class MainWindow : Window
     {
+        /// <summary>
+        /// Modbus RTU 通信客户端
+        /// </summary>
         private readonly ModbusRtuClient _modbusClient;
+
+
+        /// <summary>
+        /// 巡检仪服务
+        /// </summary>
+        private readonly InspectionMeterService
+            _inspectionMeterService;
+
+
+        /// <summary>
+        /// 自动采集服务
+        /// </summary>
+        private readonly InspectionDataAcquisitionService
+            _acquisitionService;
+
 
         public MainWindow()
         {
             InitializeComponent();
 
+
+            // =====================================================
+            // 初始化通信层
+            // =====================================================
+
             _modbusClient =
                 new ModbusRtuClient();
 
+
+            // 巡检仪服务
+            _inspectionMeterService =
+                new InspectionMeterService(
+                    _modbusClient);
+
+
+            // 自动采集服务
+            //
+            // 注意：
+            // 这里使用你当前项目已经验证成功的
+            // InspectionMeterService。
+            //
+            _acquisitionService =
+                new InspectionDataAcquisitionService(
+                    _inspectionMeterService);
+
+
+            // =====================================================
+            // 初始化首页
+            // =====================================================
+
+            ShowHome();
+
+
+            // =====================================================
+            // 初始化串口
+            // =====================================================
+
             LoadSerialPorts();
 
-            Log("程序启动");
-            Log("协议：Modbus RTU");
-            Log("串口参数：115200 / 8N1");
-            Log("功能码：03");
+
+            // =====================================================
+            // 启动日志
+            // =====================================================
+
+            SetStatus(
+                "系统启动完成");
+
         }
+
+
+        // =========================================================
+        // 首页
+        // =========================================================
+
+        /// <summary>
+        /// 显示首页
+        /// </summary>
+        private void ShowHome()
+        {
+            HomeButton.Background =
+                new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        55,
+                        65,
+                        81));
+
+            RealTimeMeasurementButton.Background =
+                System.Windows.Media.Brushes.Transparent;
+
+            CalibrationTaskButton.Background =
+                System.Windows.Media.Brushes.Transparent;
+
+            CalibrationResultButton.Background =
+                System.Windows.Media.Brushes.Transparent;
+
+            HistoryButton.Background =
+                System.Windows.Media.Brushes.Transparent;
+
+            SettingsButton.Background =
+                System.Windows.Media.Brushes.Transparent;
+
+
+            // 暂时使用主窗口内部的首页页面。
+            //
+            // 后续可以继续拆分成：
+            //
+            // Views/HomePage.xaml
+            //
+
+            MainFrame.Content =
+                CreateHomeContent();
+        }
+
+
+        /// <summary>
+        /// 创建首页内容
+        /// </summary>
+        private FrameworkElement CreateHomeContent()
+        {
+            System.Windows.Controls.Grid grid =
+                new System.Windows.Controls.Grid();
+
+            grid.Margin =
+                new Thickness(35);
+
+
+            grid.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition
+                {
+                    Height =
+                        new GridLength(
+                            90)
+                });
+
+
+            grid.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition
+                {
+                    Height =
+                        new GridLength(
+                            1,
+                            GridUnitType.Star)
+                });
+
+
+            // =====================================================
+            // 首页标题
+            // =====================================================
+
+            System.Windows.Controls.StackPanel titlePanel =
+                new System.Windows.Controls.StackPanel();
+
+
+            System.Windows.Controls.TextBlock title =
+                new System.Windows.Controls.TextBlock
+                {
+                    Text =
+                        "欢迎使用工业设备校准系统",
+
+                    FontSize =
+                        30,
+
+                    FontWeight =
+                        FontWeights.Bold,
+
+                    Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                31,
+                                41,
+                                55))
+                };
+
+
+            titlePanel.Children.Add(title);
+
+
+            System.Windows.Controls.TextBlock subtitle =
+                new System.Windows.Controls.TextBlock
+                {
+                    Text =
+                        "通过标准器巡检仪采集数据，并按照校准规范完成数据处理与结果评价",
+
+                    FontSize =
+                        15,
+
+                    Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                107,
+                                114,
+                                128)),
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                };
+
+
+            titlePanel.Children.Add(subtitle);
+
+
+            grid.Children.Add(titlePanel);
+
+
+            // =====================================================
+            // 首页功能区域
+            // =====================================================
+
+            System.Windows.Controls.Grid functionGrid =
+                new System.Windows.Controls.Grid();
+
+
+            System.Windows.Controls.Grid.SetRow(
+                functionGrid,
+                1);
+
+
+            functionGrid.ColumnDefinitions.Add(
+                new System.Windows.Controls.ColumnDefinition());
+
+
+            functionGrid.ColumnDefinitions.Add(
+                new System.Windows.Controls.ColumnDefinition());
+
+
+            functionGrid.ColumnDefinitions.Add(
+                new System.Windows.Controls.ColumnDefinition());
+
+
+            functionGrid.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition());
+
+
+            functionGrid.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition());
+
+
+            // =====================================================
+            // 实时测量
+            // =====================================================
+
+            System.Windows.Controls.Button realTimeButton =
+                CreateHomeFunctionButton(
+                    "实时测量",
+                    "查看巡检仪实时采集数据");
+
+
+            System.Windows.Controls.Grid.SetColumn(
+                realTimeButton,
+                0);
+
+            System.Windows.Controls.Grid.SetRow(
+                realTimeButton,
+                0);
+
+
+            realTimeButton.Click +=
+                RealTimeMeasurementButton_Click;
+
+
+            functionGrid.Children.Add(
+                realTimeButton);
+
+
+            // =====================================================
+            // 校准任务
+            // =====================================================
+
+            System.Windows.Controls.Button calibrationButton =
+                CreateHomeFunctionButton(
+                    "校准任务",
+                    "创建和管理校准任务");
+
+
+            System.Windows.Controls.Grid.SetColumn(
+                calibrationButton,
+                1);
+
+            System.Windows.Controls.Grid.SetRow(
+                calibrationButton,
+                0);
+
+
+            calibrationButton.Click +=
+                CalibrationTaskButton_Click;
+
+
+            functionGrid.Children.Add(
+                calibrationButton);
+
+
+            // =====================================================
+            // 校准结果
+            // =====================================================
+
+            System.Windows.Controls.Button resultButton =
+                CreateHomeFunctionButton(
+                    "校准结果",
+                    "查看校准计算结果");
+
+
+            System.Windows.Controls.Grid.SetColumn(
+                resultButton,
+                2);
+
+            System.Windows.Controls.Grid.SetRow(
+                resultButton,
+                0);
+
+
+            resultButton.Click +=
+                CalibrationResultButton_Click;
+
+
+            functionGrid.Children.Add(
+                resultButton);
+
+
+            // =====================================================
+            // 历史记录
+            // =====================================================
+
+            System.Windows.Controls.Button historyButton =
+                CreateHomeFunctionButton(
+                    "历史记录",
+                    "查看历史采集与校准记录");
+
+
+            System.Windows.Controls.Grid.SetColumn(
+                historyButton,
+                0);
+
+            System.Windows.Controls.Grid.SetRow(
+                historyButton,
+                1);
+
+
+            historyButton.Click +=
+                HistoryButton_Click;
+
+
+            functionGrid.Children.Add(
+                historyButton);
+
+
+            // =====================================================
+            // 系统设置
+            // =====================================================
+
+            System.Windows.Controls.Button settingsButton =
+                CreateHomeFunctionButton(
+                    "系统设置",
+                    "串口、设备及系统参数设置");
+
+
+            System.Windows.Controls.Grid.SetColumn(
+                settingsButton,
+                1);
+
+            System.Windows.Controls.Grid.SetRow(
+                settingsButton,
+                1);
+
+
+            settingsButton.Click +=
+                SettingsButton_Click;
+
+
+            functionGrid.Children.Add(
+                settingsButton);
+
+
+            grid.Children.Add(
+                functionGrid);
+
+
+            return grid;
+        }
+
+
+        /// <summary>
+        /// 创建首页功能按钮
+        /// </summary>
+        private System.Windows.Controls.Button
+            CreateHomeFunctionButton(
+                string title,
+                string description)
+        {
+            System.Windows.Controls.Button button =
+                new System.Windows.Controls.Button
+                {
+                    Margin =
+                        new Thickness(
+                            10),
+
+                    Background =
+                        System.Windows.Media.Brushes.White,
+
+                    BorderBrush =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                229,
+                                231,
+                                235)),
+
+                    BorderThickness =
+                        new Thickness(
+                            1),
+
+                    HorizontalContentAlignment =
+                        HorizontalAlignment.Left,
+
+                    VerticalContentAlignment =
+                        VerticalAlignment.Center
+                };
+
+
+            System.Windows.Controls.StackPanel panel =
+                new System.Windows.Controls.StackPanel
+                {
+                    Margin =
+                        new Thickness(
+                            25)
+                };
+
+
+            System.Windows.Controls.TextBlock titleText =
+                new System.Windows.Controls.TextBlock
+                {
+                    Text =
+                        title,
+
+                    FontSize =
+                        20,
+
+                    FontWeight =
+                        FontWeights.Bold,
+
+                    Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                31,
+                                41,
+                                55))
+                };
+
+
+            System.Windows.Controls.TextBlock descriptionText =
+                new System.Windows.Controls.TextBlock
+                {
+                    Text =
+                        description,
+
+                    FontSize =
+                        13,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0),
+
+                    Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                107,
+                                114,
+                                128))
+                };
+
+
+            panel.Children.Add(titleText);
+
+            panel.Children.Add(descriptionText);
+
+            button.Content = panel;
+
+
+            return button;
+        }
+
+
+        // =========================================================
+        // 实时测量
+        // =========================================================
+
+        /// <summary>
+        /// 打开实时测量页面
+        /// </summary>
+        private void RealTimeMeasurementButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                RealTimeMeasurementButton.Background =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            55,
+                            65,
+                            81));
+
+
+                HomeButton.Background =
+                    System.Windows.Media.Brushes.Transparent;
+
+
+                RealTimeMeasurementPage page =
+                    new RealTimeMeasurementPage(
+                        _acquisitionService);
+
+
+                MainFrame.Navigate(page);
+
+
+                SetStatus(
+                    "已进入实时测量页面");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    ex.Message,
+                    "打开实时测量页面失败",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+
+        // =========================================================
+        // 校准任务
+        // =========================================================
+
+        private void CalibrationTaskButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "校准任务模块将在下一阶段开发。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            SetStatus(
+                "校准任务模块尚未开发");
+        }
+
+
+        // =========================================================
+        // 校准结果
+        // =========================================================
+
+        private void CalibrationResultButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "校准结果模块将在下一阶段开发。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            SetStatus(
+                "校准结果模块尚未开发");
+        }
+
+
+        // =========================================================
+        // 历史记录
+        // =========================================================
+
+        private void HistoryButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "历史记录模块将在下一阶段开发。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            SetStatus(
+                "历史记录模块尚未开发");
+        }
+
+
+        // =========================================================
+        // 系统设置
+        // =========================================================
+
+        private void SettingsButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "系统设置模块将在下一阶段开发。",
+                "提示",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            SetStatus(
+                "系统设置模块尚未开发");
+        }
+
+
+        // =========================================================
+        // 首页按钮
+        // =========================================================
+
+        private void HomeButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            ShowHome();
+
+            SetStatus(
+                "已返回首页");
+        }
+
+
+        // =========================================================
+        // 串口
+        // =========================================================
 
         /// <summary>
         /// 获取电脑当前串口
         /// </summary>
         private void LoadSerialPorts()
         {
-            PortComboBox.Items.Clear();
-
             string[] ports =
                 SerialPort.GetPortNames();
 
             Array.Sort(ports);
-
-            foreach (string port in ports)
-            {
-                PortComboBox.Items.Add(port);
-            }
-
-            if (PortComboBox.Items.Count > 0)
-            {
-                PortComboBox.SelectedIndex = 0;
-            }
         }
 
-        /// <summary>
-        /// 打开串口
-        /// </summary>
-        private void OpenButton_Click(
-            object sender,
-            RoutedEventArgs e)
+
+        // =========================================================
+        // 状态栏
+        // =========================================================
+
+        private void SetStatus(
+            string message)
         {
-            try
+            if (BottomStatusTextBlock != null)
             {
-                if (PortComboBox.SelectedItem == null)
-                {
-                    MessageBox.Show(
-                        "请选择串口。",
-                        "提示",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-
-                    return;
-                }
-
-                string portName =
-                    PortComboBox.SelectedItem.ToString();
-
-                int baudRate =
-                    int.Parse(
-                        ((ComboBoxItem)
-                        BaudRateComboBox.SelectedItem)
-                        .Content.ToString());
-
-                _modbusClient.Open(
-                    portName,
-                    baudRate);
-
-                StatusTextBlock.Text =
-                    $"状态：已打开 {portName}，{baudRate} 8N1";
-
-                OpenButton.Content = "串口已打开";
-                OpenButton.IsEnabled = false;
-
-                Log(
-                    $"串口打开成功：{portName}，{baudRate} 8N1");
-            }
-            catch (Exception ex)
-            {
-                Log("打开串口失败：" + ex.Message);
-
-                MessageBox.Show(
-                    ex.Message,
-                    "打开串口失败",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                BottomStatusTextBlock.Text =
+                    "状态：" + message;
             }
         }
 
-        /// <summary>
-        /// 读取测量值1
-        /// </summary>
-        private void ReadButton_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            try
-            {
-                if (!_modbusClient.IsOpen)
-                {
-                    MessageBox.Show(
-                        "请先打开串口。",
-                        "提示",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
 
-                    return;
-                }
-
-                byte slaveAddress =
-                    byte.Parse(
-                        SlaveAddressTextBox.Text.Trim());
-
-                ushort startAddress =
-                    ParseAddress(
-                        StartAddressTextBox.Text);
-
-                ushort quantity =
-                    ushort.Parse(
-                        QuantityTextBox.Text.Trim());
-
-                Log("");
-                Log("========== 开始读取 ==========");
-
-                Log(
-                    $"从站地址：{slaveAddress}");
-
-                Log(
-                    $"起始寄存器：0x{startAddress:X4}");
-
-                Log(
-                    $"读取数量：{quantity}");
-
-                // 构造请求
-                byte[] requestPreview =
-                    BuildPreviewFrame(
-                        slaveAddress,
-                        startAddress,
-                        quantity);
-
-                Log(
-                    "TX → " +
-                    ModbusRtuClient.BytesToHex(
-                        requestPreview));
-
-                ModbusResponse response =
-                    _modbusClient.ReadHoldingRegisters(
-                        slaveAddress,
-                        startAddress,
-                        quantity);
-
-                if (response.RawData != null)
-                {
-                    Log(
-                        "RX ← " +
-                        ModbusRtuClient.BytesToHex(
-                            response.RawData));
-                }
-
-                if (!response.Success)
-                {
-                    Log(
-                        "读取失败：" +
-                        response.ErrorMessage);
-
-                    StatusTextBlock.Text =
-                        "状态：通信失败";
-
-                    return;
-                }
-
-                Log("读取成功");
-
-                if (response.Registers != null)
-                {
-                    for (int i = 0;
-                         i < response.Registers.Length;
-                         i++)
-                    {
-                        Log(
-                            $"寄存器[{i}] = " +
-                            $"0x{response.Registers[i]:X4} " +
-                            $"({response.Registers[i]})");
-                    }
-                }
-
-                Log("========== 读取结束 ==========");
-
-                StatusTextBlock.Text =
-                    "状态：通信成功";
-            }
-            catch (Exception ex)
-            {
-                Log("读取异常：" + ex.Message);
-
-                StatusTextBlock.Text =
-                    "状态：读取异常";
-            }
-        }
-
-        /// <summary>
-        /// 关闭串口
-        /// </summary>
-        private void CloseButton_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            _modbusClient.Close();
-
-            OpenButton.Content = "打开串口";
-            OpenButton.IsEnabled = true;
-
-            StatusTextBlock.Text =
-                "状态：串口已关闭";
-
-            Log("串口已关闭");
-        }
-
-        /// <summary>
-        /// 清空日志
-        /// </summary>
-        private void ClearButton_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            LogTextBox.Clear();
-        }
-
-        /// <summary>
-        /// 地址解析
-        /// 支持：
-        /// 0x0001
-        /// 1
-        /// </summary>
-        private ushort ParseAddress(string text)
-        {
-            text = text.Trim();
-
-            if (text.StartsWith("0x",
-                StringComparison.OrdinalIgnoreCase))
-            {
-                return Convert.ToUInt16(
-                    text.Substring(2),
-                    16);
-            }
-
-            return ushort.Parse(text);
-        }
-
-        /// <summary>
-        /// 仅用于在界面显示发送报文
-        /// </summary>
-        private byte[] BuildPreviewFrame(
-            byte slaveAddress,
-            ushort startAddress,
-            ushort quantity)
-        {
-            byte[] frame = new byte[8];
-
-            frame[0] = slaveAddress;
-            frame[1] = 0x03;
-
-            frame[2] =
-                (byte)(startAddress >> 8);
-
-            frame[3] =
-                (byte)(startAddress & 0xFF);
-
-            frame[4] =
-                (byte)(quantity >> 8);
-
-            frame[5] =
-                (byte)(quantity & 0xFF);
-
-            ushort crc =
-                CalculateCrc(frame, 0, 6);
-
-            frame[6] =
-                (byte)(crc & 0xFF);
-
-            frame[7] =
-                (byte)(crc >> 8);
-
-            return frame;
-        }
-
-        private ushort CalculateCrc(
-            byte[] data,
-            int offset,
-            int length)
-        {
-            ushort crc = 0xFFFF;
-
-            for (int i = offset;
-                 i < offset + length;
-                 i++)
-            {
-                crc ^= data[i];
-
-                for (int j = 0; j < 8; j++)
-                {
-                    if ((crc & 1) != 0)
-                    {
-                        crc >>= 1;
-                        crc ^= 0xA001;
-                    }
-                    else
-                    {
-                        crc >>= 1;
-                    }
-                }
-            }
-
-            return crc;
-        }
-
-        /// <summary>
-        /// 日志
-        /// </summary>
-        private void Log(string message)
-        {
-            LogTextBox.AppendText(
-                $"[{DateTime.Now:HH:mm:ss.fff}] " +
-                message +
-                Environment.NewLine);
-
-            LogTextBox.ScrollToEnd();
-        }
+        // =========================================================
+        // 窗口关闭
+        // =========================================================
 
         protected override void OnClosed(
             EventArgs e)
         {
-            _modbusClient.Dispose();
+            try
+            {
+                // 停止自动采集
+
+                if (_acquisitionService != null)
+                {
+                    _acquisitionService.Stop();
+                }
+
+
+                // 关闭Modbus串口
+
+                if (_modbusClient != null)
+                {
+                    _modbusClient.Close();
+
+                    _modbusClient.Dispose();
+                }
+            }
+            catch
+            {
+                // 程序关闭阶段不再向用户弹出异常
+            }
+
 
             base.OnClosed(e);
         }

@@ -57,7 +57,7 @@ namespace UpperComInspectionInstrument2022.Communication
             _serialPort.PortName = portName;
             _serialPort.BaudRate = baudRate;
 
-            // 8N1
+            // 8N1  数据位8，无奇偶校验，停止位1
             _serialPort.DataBits = 8;
             _serialPort.Parity = Parity.None;
             _serialPort.StopBits = StopBits.One;
@@ -93,7 +93,11 @@ namespace UpperComInspectionInstrument2022.Communication
                 _serialPort = null;
             }
         }
-
+    //    public ushort[] ReadHoldingRegisters(
+    //byte slaveAddress,
+    //ushort startAddress,
+    //ushort quantity)
+    //    { }
         /// <summary>
         /// 功能码03：读取保持寄存器
         /// </summary>
@@ -381,7 +385,7 @@ namespace UpperComInspectionInstrument2022.Communication
 
             int lengthWithoutCrc =
                 frame.Length - 2;
-         
+
 
             ushort calculated =
                 CalculateCrc(
