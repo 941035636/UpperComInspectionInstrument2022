@@ -1,142 +1,94 @@
-﻿
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using UpperComInspectionInstrument2022.Models;
 
-
 namespace UpperComInspectionInstrument2022.Services
 {
     /// <summary>
-    /// 巡检仪实时数据采集服务
+    /// 巡检仪实时数据采集服务。负责单一采集循环的生命周期，不负责页面显示。
     /// </summary>
     public class InspectionDataAcquisitionService
     {
         private readonly InspectionMeterService _meterService;
-
-        private CancellationTokenSource _cts;
-
+        private readonly object _stateLock = new object();
+        private CancellationTokenSource? _cts;
         private long _acquisitionId;
+        private string _calibrationType = "温度";
 
-        public bool IsRunning
+        public bool IsRunning { get; private set; }
+        public event Action<long, List<InspectionChannelData>>? DataAcquired;
+        public event Action<Exception>? AcquisitionError;
+
+        public InspectionDataAcquisitionService(InspectionMeterService meterService)
         {
-            get;
-            private set;
+            _meterService = meterService ?? throw new ArgumentNullException(nameof(meterService));
         }
 
-        /// <summary>
-        /// 每次采集完成
-        /// </summary>
-        public event Action<
-            long,
-            List<InspectionChannelData>>
-            DataAcquired;
+        public void Start(byte slaveAddress, int intervalMilliseconds) => Start(slaveAddress, intervalMilliseconds, "温度");
 
-        /// <summary>
-        /// 采集异常
-        /// </summary>
-        public event Action<Exception>
-            AcquisitionError;
-
-        public InspectionDataAcquisitionService(
-            InspectionMeterService meterService)
+        public void Start(byte slaveAddress, int intervalMilliseconds, string calibrationType)
         {
-            _meterService = meterService;
-        }
-
-        /// <summary>
-        /// 开始自动采集
-        /// </summary>
-        public void Start(
-            byte slaveAddress,
-            int intervalMilliseconds)
-        {
-            if (IsRunning)
-                return;
-
-            if (intervalMilliseconds < 200)
+            if (intervalMilliseconds < 200) intervalMilliseconds = 200;
+            CancellationTokenSource cts;
+            lock (_stateLock)
             {
-                intervalMilliseconds = 200;
+                if (IsRunning) return;
+                cts = new CancellationTokenSource();
+                _cts = cts;
+                _calibrationType = string.IsNullOrWhiteSpace(calibrationType) ? "温度" : calibrationType;
+                IsRunning = true;
             }
-
-            _cts =
-                new CancellationTokenSource();
-
-            IsRunning = true;
-
-            Task.Run(
-                () => AcquisitionLoop(
-                    slaveAddress,
-                    intervalMilliseconds,
-                    _cts.Token));
+            _ = Task.Run(() => AcquisitionLoop(slaveAddress, intervalMilliseconds, cts), CancellationToken.None);
         }
 
-        /// <summary>
-        /// 停止自动采集
-        /// </summary>
         public void Stop()
         {
-            if (!IsRunning)
-                return;
-
-            try
+            CancellationTokenSource? cts;
+            lock (_stateLock)
             {
-                _cts?.Cancel();
+                cts = _cts;
+                _cts = null;
+                IsRunning = false;
             }
-            catch
-            {
-            }
-
-            IsRunning = false;
+            cts?.Cancel();
         }
 
-        /// <summary>
-        /// 自动采集循环
-        /// </summary>
-        private async Task AcquisitionLoop(
-            byte slaveAddress,
-            int intervalMilliseconds,
-            CancellationToken token)
+        private async Task AcquisitionLoop(byte slaveAddress, int intervalMilliseconds, CancellationTokenSource owner)
         {
+            CancellationToken token = owner.Token;
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    long acquisitionId =
-                        Interlocked.Increment(
-                            ref _acquisitionId);
-
+                    long acquisitionId = Interlocked.Increment(ref _acquisitionId);
                     try
                     {
-                        List<InspectionChannelData>
-                            data =
-                            _meterService
-                                .ReadTemperatures(
-                                    slaveAddress,
-                                    acquisitionId);
-
-                        DataAcquired?.Invoke(
-                            acquisitionId,
-                            data);
+                        List<InspectionChannelData> data = _meterService.ReadMeasurements(_calibrationType, slaveAddress, acquisitionId);
+                        if (!token.IsCancellationRequested) DataAcquired?.Invoke(acquisitionId, data);
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!token.IsCancellationRequested)
                     {
                         AcquisitionError?.Invoke(ex);
                     }
-
-                    await Task.Delay(
-                        intervalMilliseconds,
-                        token);
+                    await Task.Delay(intervalMilliseconds, token).ConfigureAwait(false);
                 }
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                // 正常停止
             }
             finally
             {
-                IsRunning = false;
+                lock (_stateLock)
+                {
+                    if (ReferenceEquals(_cts, owner))
+                    {
+                        _cts = null;
+                        IsRunning = false;
+                    }
+                }
+                owner.Dispose();
             }
         }
     }

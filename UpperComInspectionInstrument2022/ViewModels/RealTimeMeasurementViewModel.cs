@@ -25,7 +25,7 @@ namespace UpperComInspectionInstrument2022.ViewModels
         /// 当前选中的采集快照
         /// </summary>
         [ObservableProperty]
-        private MeasurementSnapshot selectedSnapshot;
+        private MeasurementSnapshot? selectedSnapshot;
 
         /// <summary>
         /// 是否正在实时采集
@@ -59,16 +59,7 @@ namespace UpperComInspectionInstrument2022.ViewModels
             StatusText = "等待采集";
         }
 
-        ///清空所有的采集记录
-        //private void ClearSnapShots()
-        //{
 
-        //    snapshots.Clear();
-        //    selectedSnapshot = null;
-        //    acquisitionCount = 0;
-        //    statusText = "等待采集";
-
-        //}
 
         /// <summary>
         /// 添加一次采集结果
@@ -78,10 +69,13 @@ namespace UpperComInspectionInstrument2022.ViewModels
         {
             Snapshots.Add(snapshot);
 
+            // 实时趋势和矩阵只使用近期数据，正式校准样本由 CalibrationRunContext 独立保存。
+            // 限制内存中的快速快照数量，避免长时间巡检后 UI 持续增长。
+            while (Snapshots.Count > 600) Snapshots.RemoveAt(0);
+
             SelectedSnapshot = snapshot;
 
-            AcquisitionCount =
-                Snapshots.Count;
+            AcquisitionCount++;
 
             StatusText =
                 $"已采集 {AcquisitionCount} 次";

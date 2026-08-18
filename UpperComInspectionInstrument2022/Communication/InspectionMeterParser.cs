@@ -49,7 +49,7 @@ namespace UpperComInspectionInstrument2022.Communication
 
         public double Humidity { get; set; }
 
-        public string RawData { get; set; }
+        public string RawData { get; set; } = string.Empty;
 
         public bool IsValid { get; set; }
     }

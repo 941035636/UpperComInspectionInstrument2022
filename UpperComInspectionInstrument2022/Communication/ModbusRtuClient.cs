@@ -18,6 +18,7 @@ namespace UpperComInspectionInstrument2022.Communication
     public class ModbusRtuClient : IDisposable
     {
         private SerialPort? _serialPort;
+        private readonly object _ioLock = new object();
 
         public bool IsOpen
         {
@@ -27,7 +28,7 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
-        public string PortName
+        public string? PortName
         {
             get
             {
@@ -43,6 +44,9 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        public string LastRequestHex { get; private set; } = string.Empty;
+        public string LastResponseHex { get; private set; } = string.Empty;
+
         /// <summary>
         /// 打开串口
         /// </summary>
@@ -50,25 +54,36 @@ namespace UpperComInspectionInstrument2022.Communication
             string portName,
             int baudRate = 115200)
         {
-            Close();
+            lock (_ioLock)
+            {
+                CloseCore();
 
-            _serialPort = new SerialPort();
+                SerialPort port = new SerialPort
+                {
+                    PortName = portName,
+                    BaudRate = baudRate,
+                    DataBits = 8,
+                    Parity = Parity.None,
+                    StopBits = StopBits.One,
+                    Handshake = Handshake.None,
+                    DtrEnable = false,
+                    RtsEnable = false,
+                    ReadTimeout = 1500,
+                    WriteTimeout = 1000,
+                    Encoding = System.Text.Encoding.ASCII
+                };
 
-            _serialPort.PortName = portName;
-            _serialPort.BaudRate = baudRate;
-
-            // 8N1  数据位8，无奇偶校验，停止位1
-            _serialPort.DataBits = 8;
-            _serialPort.Parity = Parity.None;
-            _serialPort.StopBits = StopBits.One;
-
-            _serialPort.ReadTimeout = 1000;
-            _serialPort.WriteTimeout = 1000;
-
-            // Modbus RTU 不使用普通文本编码
-            _serialPort.Encoding = System.Text.Encoding.ASCII;
-
-            _serialPort.Open();
+                try
+                {
+                    port.Open();
+                    _serialPort = port;
+                }
+                catch
+                {
+                    port.Dispose();
+                    throw;
+                }
+            }
         }
 
         /// <summary>
@@ -76,21 +91,25 @@ namespace UpperComInspectionInstrument2022.Communication
         /// </summary>
         public void Close()
         {
-            if (_serialPort != null)
+            lock (_ioLock)
             {
-                try
-                {
-                    if (_serialPort.IsOpen)
-                    {
-                        _serialPort.Close();
-                    }
-                }
-                catch
-                {
-                }
+                CloseCore();
+            }
+        }
 
-                _serialPort.Dispose();
-                _serialPort = null;
+        private void CloseCore()
+        {
+            SerialPort? port = _serialPort;
+            _serialPort = null;
+            if (port == null) return;
+
+            try
+            {
+                if (port.IsOpen) port.Close();
+            }
+            finally
+            {
+                port.Dispose();
             }
         }
     //    public ushort[] ReadHoldingRegisters(
@@ -102,6 +121,17 @@ namespace UpperComInspectionInstrument2022.Communication
         /// 功能码03：读取保持寄存器
         /// </summary>
         public ModbusResponse ReadHoldingRegisters(
+            byte slaveAddress,
+            ushort startAddress,
+            ushort quantity)
+        {
+            lock (_ioLock)
+            {
+                return ReadHoldingRegistersCore(slaveAddress, startAddress, quantity);
+            }
+        }
+
+        private ModbusResponse ReadHoldingRegistersCore(
             byte slaveAddress,
             ushort startAddress,
             ushort quantity)
@@ -130,14 +160,17 @@ namespace UpperComInspectionInstrument2022.Communication
                 quantity);
 
             string txText = BytesToHex(request);
+            LastRequestHex = txText;
+            LastResponseHex = string.Empty;
 
             try
             {
-                _serialPort.DiscardInBuffer();
-                _serialPort.DiscardOutBuffer();
+                SerialPort port = _serialPort ?? throw new InvalidOperationException("串口尚未打开");
+                port.DiscardInBuffer();
+                port.DiscardOutBuffer();
 
                 // 发送
-                _serialPort.Write(
+                port.Write(
                     request,
                     0,
                     request.Length);
@@ -152,7 +185,8 @@ namespace UpperComInspectionInstrument2022.Communication
                 //
                 // 因此先读取前3个字节
 
-                byte[] header = ReadExact(3);
+                byte[] header = ReadExact(port, 3);
+                LastResponseHex = BytesToHex(header);
 
                 byte responseSlave = header[0];
                 byte responseFunction = header[1];
@@ -160,7 +194,8 @@ namespace UpperComInspectionInstrument2022.Communication
 
                 int remainingLength = byteCount + 2;
 
-                byte[] remaining = ReadExact(remainingLength);
+                byte[] remaining = ReadExact(port, remainingLength);
+                LastResponseHex = BytesToHex(header) + " " + BytesToHex(remaining);
 
                 byte[] response = new byte[
                     header.Length + remaining.Length];
@@ -266,7 +301,7 @@ namespace UpperComInspectionInstrument2022.Communication
                 {
                     Success = false,
                     ErrorMessage =
-                        "读取超时，没有收到完整的 Modbus 响应"
+                        $"读取超时，没有收到完整的 Modbus 响应。请求帧：{txText}"
                 };
             }
             catch (Exception ex)
@@ -315,7 +350,7 @@ namespace UpperComInspectionInstrument2022.Communication
         /// <summary>
         /// 精确读取指定数量字节
         /// </summary>
-        private byte[] ReadExact(int length)
+        private static byte[] ReadExact(SerialPort port, int length)
         {
             byte[] buffer = new byte[length];
 
@@ -324,7 +359,7 @@ namespace UpperComInspectionInstrument2022.Communication
             while (offset < length)
             {
                 int count =
-                    _serialPort.Read(
+                    port.Read(
                         buffer,
                         offset,
                         length - offset);

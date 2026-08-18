@@ -1,15 +1,106 @@
-﻿<!-->设备管理页面<-->
 <Page x:Class="UpperComInspectionInstrument2022.Views.DeviceView"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-      xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-      xmlns:local="clr-namespace:UpperComInspectionInstrument2022.Views"
-      mc:Ignorable="d" 
-      d:DesignHeight="450" d:DesignWidth="800"
-      Title="DeviceView">
+      Title="系统设置">
+    <Page.Resources>
+        <Style TargetType="TextBlock" x:Key="FieldLabel"><Setter Property="Foreground" Value="#475569"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
+        <Style TargetType="TextBox" x:Key="FieldBox"><Setter Property="Padding" Value="8"/><Setter Property="Margin" Value="8,0,0,0"/><Setter Property="BorderBrush" Value="#CBD5E1"/></Style>
+    </Page.Resources>
+    <Grid Background="#EEF2F6">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="White" Padding="28,22" BorderBrush="#D8E0EA" BorderThickness="0,0,0,1">
+            <StackPanel>
+                <TextBlock Text="系统设置" FontSize="28" FontWeight="Bold" Foreground="#0F172A"/>
+                <TextBlock Text="维护长期有效的实验室与标准器资料；被校设备、现场条件和采样计划在每个校准任务中单独记录。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="28,20,28,24">
+                <Border Padding="22" Background="White" CornerRadius="8" BorderBrush="#D8E0EA" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="实验室与标准器身份" FontSize="18" FontWeight="SemiBold" Foreground="#1F2937"/>
+                        <TextBlock Text="保存任务时会生成一份只读快照，后续修改这里不会改变已建立任务。" Margin="0,7,0,0" Foreground="#64748B"/>
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="标准器名称" Style="{StaticResource FieldLabel}"/><TextBox x:Name="StandardNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="证书编号" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="CertificateNumberTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="有效期至" Style="{StaticResource FieldLabel}"/><DatePicker x:Name="ValidityDatePicker" Grid.Column="1" Margin="8,0,0,0" Padding="5"/>
+                            <TextBlock Grid.Column="2" Text="型号规格" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="ModelTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="出厂编号" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SerialNumberTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="校准机构" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="OrganizationTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="机构地址" Style="{StaticResource FieldLabel}"/><TextBox x:Name="OrganizationAddressTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
-    <Grid>
+                <Border Margin="0,16,0,0" Padding="22" Background="White" CornerRadius="8" BorderBrush="#D8E0EA" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="测量能力与溯源参数" FontSize="18" FontWeight="SemiBold" Foreground="#1F2937"/>
+                        <TextBlock Text="JJF 1101 要求量程覆盖任务范围、温度分辨力不低于 0.01 ℃、湿度分辨力不低于 0.1 %RH；JJF 1376 要求测温仪器不低于 0.02 级。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="温度量程" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureRangeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="湿度量程" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityRangeTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="温度分辨力 (℃)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureResolutionTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="湿度分辨力 (%RH)" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityResolutionTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="准确度/MPE" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AccuracySpecificationTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="测温仪器级别" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="MeasuringInstrumentClassTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="热电偶等级" Style="{StaticResource FieldLabel}"/><TextBox x:Name="ThermocoupleGradeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
+                <Border Margin="0,16,0,0" Padding="22" Background="White" CornerRadius="8" BorderBrush="#D8E0EA" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="证书不确定度与通道修正" FontSize="18" FontWeight="SemiBold" Foreground="#1F2937"/>
+                        <TextBlock Text="这里填写证书给出的扩展不确定度 U 和包含因子 k。通道修正格式示例：1:0.02,2:-0.01；留空表示数据已修正或暂未录入。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="185"/><ColumnDefinition Width="110"/><ColumnDefinition Width="145"/><ColumnDefinition Width="110"/><ColumnDefinition Width="185"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="温度扩展不确定度 U" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureUncertaintyTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="温度包含因子 k" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="TemperatureCoverageTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="4" Text="湿度扩展不确定度 U" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityUncertaintyTextBox" Grid.Column="5" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="185"/><ColumnDefinition Width="110"/><ColumnDefinition Width="145"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="湿度包含因子 k" Style="{StaticResource FieldLabel}"/><TextBox x:Name="HumidityCoverageTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="温度通道修正" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="TemperatureCorrectionsTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="185"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="湿度通道修正" Style="{StaticResource FieldLabel}"/><TextBox x:Name="HumidityCorrectionsTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="185"/><ColumnDefinition Width="110"/><ColumnDefinition Width="185"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="温度修正值最大变化" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureStabilityChangeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Grid.Column="2" Text="湿度修正值最大变化" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityStabilityChangeTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <Border Grid.Row="2" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="28,12">
+            <DockPanel>
+                <TextBlock x:Name="StatusTextBlock" Text="设置尚未保存" Foreground="#B45309" VerticalAlignment="Center"/>
+                <Button DockPanel.Dock="Right" Content="保存系统资料" Click="SaveButton_Click" Padding="24,10" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+            </DockPanel>
+        </Border>
     </Grid>
 </Page>
