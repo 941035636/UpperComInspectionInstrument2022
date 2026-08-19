@@ -564,6 +564,8 @@ namespace UpperComInspectionInstrument2022.Services
             return rows;
         }
 
+        internal static List<string[]> ReadCsvFile(string path) => ParseCsv(File.ReadAllText(path, Encoding.UTF8));
+
         private static string MakeSafeFileName(string value)
         {
             char[] invalid = Path.GetInvalidFileNameChars();
@@ -599,5 +601,6 @@ namespace UpperComInspectionInstrument2022.Services
         public string DirectoryPath { get; init; } = string.Empty;
         public string SampleFilePath { get; init; } = string.Empty;
         public string ResultFilePath { get; init; } = string.Empty;
+        public string ExcelReportFilePath => Path.Combine(DirectoryPath, "报告", "校准原始记录.xlsx");
     }
 }

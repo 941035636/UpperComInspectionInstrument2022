@@ -31,7 +31,7 @@
         </UniformGrid>
 
         <Border Grid.Row="4" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="28,12" Margin="0,18,0,0">
-            <DockPanel><TextBlock Text="结果计算模块接入前，本页只展示任务依据和流程状态，不生成虚假判定。" Foreground="#64748B" VerticalAlignment="Center"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/><Button x:Name="OpenReportButton" Content="查看报告准备状态" Click="OpenReportButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/></StackPanel></DockPanel>
+            <DockPanel><TextBlock Text="Excel 原始记录从本次作业的固化 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B" VerticalAlignment="Center"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/><Button x:Name="OpenReportButton" Content="生成 Excel 原始记录" Click="OpenReportButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/></StackPanel></DockPanel>
         </Border>
     </Grid>
 </Page>

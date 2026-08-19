@@ -52,15 +52,33 @@ namespace UpperComInspectionInstrument2022.Views
 
         private void OpenSelectedResultButton_Click(object sender, RoutedEventArgs e) => OpenSelectedResult();
 
+        private void GenerateExcelReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (!CalibrationExcelReportService.Default.TryGenerate(selected.DirectoryPath, out string reportPath, out string error))
+            {
+                MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            OpenPath(reportPath);
+        }
+
+        private void OpenExcelReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (!File.Exists(selected.ExcelReportFilePath))
+            {
+                MessageBox.Show("该作业尚未生成 Excel 原始记录，请先点击“生成/更新 Excel”。", "Excel 报告不存在", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            OpenPath(selected.ExcelReportFilePath);
+        }
+
         private void HistoryDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedPath(openSample: false);
 
         private void OpenSelectedResult()
         {
-            if (HistoryDataGrid.SelectedItem is not CalibrationArchiveSummary selected)
-            {
-                MessageBox.Show("请先选择一条本地校准作业。", "历史记录", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
             if (!File.Exists(selected.ResultFilePath))
             {
                 MessageBox.Show("该作业尚未生成校准结果，可能仍在采样或已经中断。", "结果文件不存在", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -69,13 +87,21 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(selected.ResultFilePath);
         }
 
+        private bool TryGetSelectedArchive(out CalibrationArchiveSummary selected)
+        {
+            if (HistoryDataGrid.SelectedItem is CalibrationArchiveSummary archive)
+            {
+                selected = archive;
+                return true;
+            }
+            selected = null!;
+            MessageBox.Show("请先选择一条本地校准作业。", "历史记录", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+
         private void OpenSelectedPath(bool openSample)
         {
-            if (HistoryDataGrid.SelectedItem is not CalibrationArchiveSummary selected)
-            {
-                MessageBox.Show("请先选择一条本地校准作业。", "历史记录", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
 
             string path = openSample ? selected.SampleFilePath : selected.DirectoryPath;
             if (!Directory.Exists(path) && !File.Exists(path))

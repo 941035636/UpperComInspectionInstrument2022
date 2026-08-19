@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using UpperComInspectionInstrument2022.Models;
@@ -88,6 +90,27 @@ namespace UpperComInspectionInstrument2022.Views
             if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowRealTimeMeasurementPage();
         }
 
-        private void OpenReportButton_Click(object sender, RoutedEventArgs e) => NavigationService?.Navigate(new ReportView());
+        private void OpenReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
+            if (string.IsNullOrWhiteSpace(jobDirectory))
+            {
+                MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 Excel 原始记录。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (!CalibrationExcelReportService.Default.TryGenerate(jobDirectory, out string reportPath, out string error))
+            {
+                MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo(reportPath) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Excel 原始记录已生成，但无法调用系统默认办公软件打开：\n{reportPath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
     }
 }
