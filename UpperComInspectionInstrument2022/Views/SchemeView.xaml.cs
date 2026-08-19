@@ -183,6 +183,13 @@ namespace UpperComInspectionInstrument2022.Views
                 : PointLayoutModeComboBox.SelectedIndex == 2
                     ? "工作区尺寸 (mm) *"
                     : "工作区尺寸 (mm)（可选）";
+            ViewLayoutFigureButton.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
+            ViewLayoutFigureButton.Content = PointLayoutModeComboBox.SelectedIndex switch
+            {
+                0 => "查看图 1",
+                1 => "查看图 2",
+                _ => "查看图 1 / 图 2"
+            };
             ApplyStandardVisibility(includesHumidity, isJjf1101);
 
             if (VolumeComboBox.SelectedIndex < 0)
@@ -235,19 +242,29 @@ namespace UpperComInspectionInstrument2022.Views
             RulePlanTextBlock.Text = $"校准点方案：{CalibrationStandardRuleService.GetCalibrationPointRuleText(rule, PointSelectionComboBox.SelectedIndex)}\n空间布点：{selectedLayoutText}\n{rule.SamplingRuleText}";
             RuleStabilityTextBlock.Text = $"{rule.StabilityRuleText}\n输出：{rule.ResultItemsText}";
 
-            bool adjustedLayout = rule.SupportsCustomPointLayout && PointLayoutModeComboBox.SelectedIndex > 0;
-            bool customPointCount = rule.SupportsCustomPointLayout && PointLayoutModeComboBox.SelectedIndex > 0;
-            TemperaturePointCountTextBox.IsReadOnly = !customPointCount;
-            HumidityPointCountTextBox.IsReadOnly = !customPointCount;
-            TemperatureCenterPointTextBox.IsReadOnly = !adjustedLayout;
+            bool customPointInput = CalibrationStandardRuleService.AllowsCustomPointInput(
+                rule, PointLayoutModeComboBox.SelectedIndex);
+            TemperaturePointCountTextBox.IsReadOnly = !customPointInput;
+            HumidityPointCountTextBox.IsReadOnly = !customPointInput;
+            TemperatureCenterPointTextBox.IsReadOnly = !customPointInput;
             // O 是规范中的空间位置；它映射到巡检仪哪个湿度通道取决于现场接线，始终允许确认/修改。
             HumidityCenterPointTextBox.IsReadOnly = false;
-            PointLayoutDescriptionTextBox.IsReadOnly = !adjustedLayout;
+            PointLayoutDescriptionTextBox.IsReadOnly = !customPointInput;
             PlannedCountTextBox.IsReadOnly = !isJjf1101;
             SamplingIntervalTextBox.IsReadOnly = !isJjf1101;
             LoadDescriptionTextBox.IsEnabled = LoadConditionComboBox.SelectedIndex == 1;
             UpdateStabilityControls();
             UpdateTaskLinkageSummary();
+        }
+
+        private void ViewLayoutFigureButton_Click(object sender, RoutedEventArgs e)
+        {
+            int preferredFigure = PointLayoutModeComboBox.SelectedIndex == 1 ? 2 : 1;
+            Jjf1376LayoutFigureWindow window = new(preferredFigure)
+            {
+                Owner = Window.GetWindow(this)
+            };
+            window.ShowDialog();
         }
 
         private void ApplyStandardVisibility(bool includesHumidity, bool isJjf1101)
@@ -430,30 +447,37 @@ namespace UpperComInspectionInstrument2022.Views
                 ambientPressure = double.Parse(AmbientPressureTextBox.Text.Trim());
             }
 
-            bool customPointCount = rule.SupportsCustomPointLayout && PointLayoutModeComboBox.SelectedIndex > 0;
-            if (!customPointCount &&
+            bool customPointInput = CalibrationStandardRuleService.AllowsCustomPointInput(
+                rule, PointLayoutModeComboBox.SelectedIndex);
+            if (!customPointInput &&
                 (temperatureCount != rule.TemperaturePointCount || humidityCount != rule.HumidityPointCount))
             {
-                MessageBox.Show("规范默认布点要求保持自动生成的测点数量；如需修改，请选择“按实际工作位置调整”或极端容积模式，并填写布点说明。", "布点不符合选择", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("当前布点模式使用规范自动生成的测点数量；如需修改，请选择带“点数可自定义”的布点方式，并填写布点说明。", "布点不符合选择", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            bool requiresDefaultCenter = !rule.SupportsCustomPointLayout || PointLayoutModeComboBox.SelectedIndex == 0;
-            if (requiresDefaultCenter && temperatureCenter != rule.TemperatureCenterPoint)
+            if (!customPointInput && temperatureCenter != rule.TemperatureCenterPoint)
             {
                 MessageBox.Show("规范默认布点的温度中心/监控点不能改变；如需调整空间位置，请选择对应的调整方式并填写说明。", "中心点不符合选择", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (rule.SupportsCustomPointLayout && PointLayoutModeComboBox.SelectedIndex > 0 && string.IsNullOrWhiteSpace(PointLayoutDescriptionTextBox.Text))
+            if (customPointInput && string.IsNullOrWhiteSpace(PointLayoutDescriptionTextBox.Text))
             {
                 ShowInputError("调整布点必须说明测点位置及原因。", PointLayoutDescriptionTextBox);
                 return;
             }
-            bool extremePointCountMode = rule.CustomPointCountModeIndex >= 0 &&
+            bool extremePointCountMode = rule.RequiresExtremeVolumeForCustomPointCount &&
+                                         rule.CustomPointCountModeIndex >= 0 &&
                                          PointLayoutModeComboBox.SelectedIndex == rule.CustomPointCountModeIndex;
             if (extremePointCountMode && (!workZoneVolume.HasValue ||
                                           !CalibrationStandardRuleService.AllowsJjf1101PointCountAdjustment(workZoneVolume.Value)))
             {
                 ShowInputError("JJF 1101 只有工作空间容积小于 0.05 m³ 或大于 50 m³ 时才允许调整测点数量；请填写真实工作区尺寸并选择正确容积档位。", WorkZoneLengthTextBox);
+                return;
+            }
+            if (StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index &&
+                customPointInput && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))
+            {
+                ShowInputError("箱式电阻炉自定义测点数属于现场调整，必须在偏离/自定义说明中记录原因和依据。", DeviationDescriptionTextBox);
                 return;
             }
             if (PointSelectionComboBox.SelectedIndex == 2 && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))

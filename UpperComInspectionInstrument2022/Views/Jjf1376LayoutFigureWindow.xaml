@@ -1,0 +1,49 @@
+<Window x:Class="UpperComInspectionInstrument2022.Views.Jjf1376LayoutFigureWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JJF 1376-2012 布点图"
+        Width="1120"
+        Height="820"
+        MinWidth="820"
+        MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        Background="#EEF2F6">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="#172033" Padding="22,16">
+            <StackPanel>
+                <TextBlock Text="JJF 1376-2012 箱式电阻炉布点图" Foreground="White" FontSize="21" FontWeight="Bold"/>
+                <TextBlock Text="图 1 用于按工作区尺寸确定测温区；图 2 用于按炉膛尺寸换算测温区。" Foreground="#CBD5E1" Margin="0,6,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <TabControl x:Name="FigureTabControl" Grid.Row="1" Margin="18" Background="White" BorderBrush="#CBD5E1">
+            <TabItem Header="图 1 · 工作区尺寸">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" Background="White">
+                    <Border Padding="18">
+                        <Image Source="/Resources/Standards/JJF1376-Figure1.png" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+                    </Border>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="图 2 · 炉膛尺寸">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" Background="White">
+                    <Border Padding="18">
+                        <Image Source="/Resources/Standards/JJF1376-Figure2.png" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+                    </Border>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#CBD5E1" BorderThickness="0,1,0,0" Padding="18,12">
+            <Grid>
+                <TextBlock Text="图示摘自 JJF 1376-2012 第 7.3.2、7.3.3 条；自定义布点时仍应记录实际测温架和每个测点位置。" Foreground="#64748B" VerticalAlignment="Center"/>
+                <Button Content="关闭" HorizontalAlignment="Right" Width="96" Padding="12,7" Click="CloseButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

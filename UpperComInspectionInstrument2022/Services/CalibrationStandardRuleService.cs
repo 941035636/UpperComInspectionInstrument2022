@@ -34,6 +34,8 @@ namespace UpperComInspectionInstrument2022.Services
         public string AlternatePointLayoutText { get; init; } = string.Empty;
         public string CustomPointCountLayoutText { get; init; } = string.Empty;
         public int CustomPointCountModeIndex { get; init; } = -1;
+        public int[] EditablePointCountModeIndexes { get; init; } = Array.Empty<int>();
+        public bool RequiresExtremeVolumeForCustomPointCount { get; init; }
         public bool SupportsCustomPointLayout { get; init; }
         public string PointLayoutText { get; init; } = string.Empty;
         public string SamplingRuleText { get; init; } = string.Empty;
@@ -102,6 +104,8 @@ namespace UpperComInspectionInstrument2022.Services
                 },
                 SupportsCustomPointLayout = true,
                 CustomPointCountModeIndex = 2,
+                EditablePointCountModeIndexes = new[] { 1, 2 },
+                RequiresExtremeVolumeForCustomPointCount = true,
                 PointLayoutText = large
                     ? "上、中、下三层布点：温度 15 点、湿度 4 点；温度 15 点和湿度 O 点位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/C/O 映射，O 默认 CH4，须按实际接线确认。"
                     : "上、中、下三层布点：温度 9 点、湿度 3 点；温度 5 点和湿度 O 点位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/O 映射，O 默认 CH3，须按实际接线确认。",
@@ -158,16 +162,20 @@ namespace UpperComInspectionInstrument2022.Services
                 },
                 PointLayoutModeOptions = new[]
                 {
-                    "按工作区尺寸确定测温区",
-                    "按炉膛尺寸确定测温区（图 2）"
+                    "按工作区尺寸确定测温区（图 1）",
+                    "按炉膛尺寸确定测温区（图 2）",
+                    "按实际测温架/工作位置调整（点数可自定义）"
                 },
-                SupportsCustomPointLayout = false,
+                SupportsCustomPointLayout = true,
+                CustomPointCountModeIndex = 2,
+                EditablePointCountModeIndexes = new[] { 2 },
                 PointLayoutText = large
                     ? "按生产厂或客户提供的工作区尺寸作为测温区，布置 9 点：8 个端角点，监控点 9 位于距控温热电偶测量端延伸方向不超过 150 mm 处。"
                     : "按生产厂或客户提供的工作区尺寸作为测温区，布置 5 点：几何中心监控点 3，以及前下左、前上右、后上左、后下右四个端角点。",
                 AlternatePointLayoutText = large
                     ? "以炉膛尺寸为设计参数，按规范图 2 确定测温区，布置 9 点：8 个端角点和监控点 9；监控点距控温热电偶测量端延伸方向不超过 150 mm。"
-                    : "以炉膛尺寸为设计参数，按规范图 1/图 2 确定测温区，布置 5 点：中心监控点 3 和四个规定端角点。",
+                    : "以炉膛尺寸为设计参数，按规范图 2 确定测温区，布置 5 点：中心监控点 3 和四个规定端角点。",
+                CustomPointCountLayoutText = "按实际测温架、装载区域或客户工作位置自定义温度测点数、监控点编号及空间位置；必须逐点记录位置，并在偏离/自定义说明中写明不能采用规范 5 点/9 点布置的原因。",
                 SamplingRuleText = "达到热稳定后，在 60 min 内每隔 3 min 记录 1 次，至少 20 次；每一轮所有测温点必须在 1 min 内记录完成。",
                 StabilityRuleText = "规范要求炉温达到校准温度并处于热稳定状态后开始读数，不规定统一等待分钟数，需由操作人员依据设备状态确认。",
                 EnvironmentRuleText = "环境 15 ℃～35 ℃、湿度不大于 85 %RH；应无影响校准的外磁场、强烈振动、强烈气流、高浓度粉尘和腐蚀性物质。通常空载校准。",
@@ -191,6 +199,9 @@ namespace UpperComInspectionInstrument2022.Services
 
         public static bool AllowsJjf1101PointCountAdjustment(double volumeM3) =>
             double.IsFinite(volumeM3) && volumeM3 > 0 && (volumeM3 < 0.05 || volumeM3 > 50);
+
+        public static bool AllowsCustomPointInput(CalibrationStandardRule rule, int layoutModeIndex) =>
+            rule.SupportsCustomPointLayout && Array.IndexOf(rule.EditablePointCountModeIndexes, layoutModeIndex) >= 0;
 
         public static string GetCalibrationPointRuleText(CalibrationStandardRule rule, int selectionIndex)
         {

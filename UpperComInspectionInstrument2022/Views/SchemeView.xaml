@@ -106,7 +106,7 @@
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
                         <TextBlock Text="3 校准点与布点" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
-                        <TextBlock Text="浅灰只读项由规范和设备容积自动生成；白色项是本次任务实值，必须按设备设定、实际接线和铭牌/说明书填写。" Margin="0,6,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
+                        <TextBlock Text="不可更改的参数项由规范和设备容积自动生成；可改项是本次任务实值，必须按设备设定、实际接线和铭牌/说明书填写。" Margin="0,6,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <TextBlock Text="设定温度 (℃) *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SetTemperatureTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="填写被校设备本次实际设定值；规范只校验适用范围，不提供固定设定值。"/>
@@ -132,7 +132,12 @@
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <TextBlock x:Name="HumidityCenterPointLabel" Text="湿度 O 对应通道 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="HumidityCenterPointTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="规范规定中心位置 O，但不规定巡检仪接线通道；请按实际接线确认。"/>
-                            <TextBlock Grid.Column="2" Text="布点方式" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><ComboBox x:Name="PointLayoutModeComboBox" Grid.Column="3" Style="{StaticResource FieldCombo}" SelectionChanged="PointLayoutModeComboBox_SelectionChanged"/>
+                            <TextBlock Grid.Column="2" Text="布点方式" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/>
+                            <Grid Grid.Column="3" Margin="8,0,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <ComboBox x:Name="PointLayoutModeComboBox" Margin="0" Padding="7,5" BorderBrush="#CBD5E1" SelectionChanged="PointLayoutModeComboBox_SelectionChanged"/>
+                                <Button x:Name="ViewLayoutFigureButton" Grid.Column="1" Content="查看图 1 / 图 2" Click="ViewLayoutFigureButton_Click" Margin="10,0,0,0" Padding="14,6" Background="White" Foreground="#1D4ED8" BorderBrush="#93C5FD" Visibility="Collapsed" ToolTip="查看 JJF 1376-2012 图 1、图 2 的测温区与测温点位置示意图"/>
+                            </Grid>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
