@@ -11,33 +11,47 @@
         <Border Grid.Row="0" Background="White" Padding="28,20" BorderBrush="#D8E0EA" BorderThickness="0,0,0,1">
             <StackPanel>
                 <TextBlock Text="历史记录" FontSize="27" FontWeight="Bold" Foreground="#0F172A"/>
-                <TextBlock Text="查询已完成并归档的校准任务、原始数据和报告。" Margin="0,6,0,0" Foreground="#64748B"/>
+                <TextBlock Text="直接读取“文档\温湿度校准数据”中的 CSV 作业；可用 Excel/WPS 打开、复制和备份。" Margin="0,6,0,0" Foreground="#64748B"/>
             </StackPanel>
         </Border>
         <Border Grid.Row="1" Margin="28,18,28,0" Padding="14" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="7">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="170"/><ColumnDefinition Width="170"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="170"/><ColumnDefinition Width="150"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBox x:Name="KeywordTextBox" Text="" ToolTip="输入任务编号、设备名称或证书编号"/>
-                <ComboBox Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0"><ComboBoxItem Content="全部规范"/><ComboBoxItem Content="JJF 1101-2019"/><ComboBoxItem Content="JJF 1376-2012"/></ComboBox>
-                <ComboBox Grid.Column="2" Margin="10,0,0,0" SelectedIndex="0"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="已完成"/><ComboBoxItem Content="已生成报告"/></ComboBox>
+                <ComboBox x:Name="StandardFilterComboBox" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0"><ComboBoxItem Content="全部规范"/><ComboBoxItem Content="JJF 1101-2019"/><ComboBoxItem Content="JJF 1376-2012"/></ComboBox>
+                <ComboBox x:Name="StatusFilterComboBox" Grid.Column="2" Margin="10,0,0,0" SelectedIndex="0"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="采样中"/><ComboBoxItem Content="已完成"/><ComboBoxItem Content="已中断"/><ComboBoxItem Content="保存异常"/></ComboBox>
                 <Button Grid.Column="3" Content="查询" Padding="22,8" Margin="10,0,0,0" Background="#2563EB" Foreground="White" BorderThickness="0" Click="SearchButton_Click"/>
+                <Button Grid.Column="4" Content="打开数据目录" Padding="18,8" Margin="10,0,0,0" Click="OpenDataRootButton_Click"/>
             </Grid>
         </Border>
         <Border Grid.Row="2" Margin="28,14,28,28" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="7">
             <Grid>
-                <DataGrid x:Name="HistoryDataGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Visibility="Collapsed">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <DockPanel Margin="14,10">
+                    <TextBlock Text="本地校准作业" FontSize="17" FontWeight="SemiBold" Foreground="#0F172A" VerticalAlignment="Center"/>
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                        <Button Content="打开选中作业" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedJobButton_Click"/>
+                        <Button Content="打开采样 CSV" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedSampleButton_Click"/>
+                        <Button Content="打开结果 CSV" Padding="14,7" Click="OpenSelectedResultButton_Click"/>
+                    </StackPanel>
+                </DockPanel>
+                <DataGrid Grid.Row="1" x:Name="HistoryDataGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Visibility="Collapsed" SelectionMode="Single" MouseDoubleClick="HistoryDataGrid_MouseDoubleClick">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="任务时间" Binding="{Binding TaskTime}" Width="150"/>
+                        <DataGridTextColumn Header="任务编号" Binding="{Binding JobId}" Width="190"/>
                         <DataGridTextColumn Header="校准规范" Binding="{Binding Standard}" Width="180"/>
                         <DataGridTextColumn Header="被校设备" Binding="{Binding Device}" Width="*"/>
+                        <DataGridTextColumn Header="委托单位" Binding="{Binding CustomerName}" Width="140"/>
                         <DataGridTextColumn Header="校准类型" Binding="{Binding Type}" Width="120"/>
+                        <DataGridTextColumn Header="样本" Binding="{Binding SampleProgress}" Width="80"/>
                         <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="110"/>
+                        <DataGridTextColumn Header="状态说明" Binding="{Binding StatusMessage}" Width="220"/>
                     </DataGrid.Columns>
                 </DataGrid>
-                <StackPanel x:Name="EmptyStatePanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460">
+                <StackPanel Grid.Row="1" x:Name="EmptyStatePanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
                     <Border Width="54" Height="54" CornerRadius="27" Background="#EFF6FF" HorizontalAlignment="Center"><TextBlock Text="□" FontSize="25" Foreground="#2563EB" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                    <TextBlock Text="暂无已归档的校准记录" FontSize="19" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Center" Margin="0,16,0,0"/>
-                    <TextBlock Text="完成校准结果计算并生成报告后，任务会出现在这里。当前版本尚未接入结果计算和归档存储模块。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#64748B" Margin="0,8,0,0"/>
+                    <TextBlock Text="暂无符合条件的本地校准作业" FontSize="19" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Center" Margin="0,16,0,0"/>
+                    <TextBlock Text="启动正式校准后，系统会立即建立作业目录；已完成、已中断和保存异常的作业都会保留，便于追溯。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#64748B" Margin="0,8,0,0"/>
                     <Button Content="返回校准作业" Padding="20,9" HorizontalAlignment="Center" Margin="0,18,0,0" Click="OpenCalibrationJobButton_Click"/>
                 </StackPanel>
             </Grid>

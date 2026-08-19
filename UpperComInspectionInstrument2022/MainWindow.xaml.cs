@@ -110,6 +110,7 @@ namespace UpperComInspectionInstrument2022
         {
             try
             {
+                CalibrationFileStorageService.Default.TryMarkInterrupted("程序关闭，正式校准自动中断", out _);
                 _acquisitionService.Stop();
                 _modbusClient.Close();
                 _modbusClient.Dispose();

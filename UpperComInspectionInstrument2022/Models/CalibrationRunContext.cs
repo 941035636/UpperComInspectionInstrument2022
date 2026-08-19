@@ -28,16 +28,18 @@ namespace UpperComInspectionInstrument2022.Models
             CalibrationTaskContext.HasCompletedCalibration = false;
         }
 
-        public static void Add(MeasurementSnapshot snapshot, double? dutTemperature, double? dutHumidity)
+        public static CalibrationSampleRecord Add(MeasurementSnapshot snapshot, double? dutTemperature, double? dutHumidity)
         {
-            SamplesInternal.Add(new CalibrationSampleRecord
+            CalibrationSampleRecord record = new()
             {
                 SampleNumber = SamplesInternal.Count + 1,
                 Timestamp = snapshot.Timestamp,
                 Snapshot = snapshot,
                 DutDisplayTemperature = dutTemperature,
                 DutDisplayHumidity = dutHumidity
-            });
+            };
+            SamplesInternal.Add(record);
+            return record;
         }
 
         public static void Clear()

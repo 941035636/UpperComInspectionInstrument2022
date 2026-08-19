@@ -499,10 +499,17 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.DutDisplayHumidity = dutHumidity;
             CalibrationTaskContext.Save();
 
+            CalibrationRunContext.Begin();
+            if (!CalibrationFileStorageService.Default.TryBeginJob(out string storageError))
+            {
+                CalibrationRunContext.Clear();
+                MessageBox.Show(storageError, "无法建立本地作业", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             _calibrationRunning = true;
             _calibrationSampleCount = 0;
             _nextCalibrationSampleAt = DateTime.Now;
-            CalibrationRunContext.Begin();
             StartCalibrationButton.Content = "校准采样中";
             StartCalibrationButton.IsEnabled = false;
             ViewResultButton.IsEnabled = false;
@@ -538,6 +545,9 @@ namespace UpperComInspectionInstrument2022.Views
         private void StopAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
             // 只有用户明确点击“暂停/停止”时才停止后台采集。
+            string storageWarning = string.Empty;
+            if (_calibrationRunning)
+                CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
             _acquisitionService.Stop();
             _viewModel.IsAcquiring = false;
             _calibrationRunning = false;
@@ -555,11 +565,16 @@ namespace UpperComInspectionInstrument2022.Views
             StabilityTextBlock.Foreground = Brushes.DarkOrange;
             StatusTextBlock.Text = "已暂停实时测量";
             UpdateConnectionStatus();
+            if (!string.IsNullOrWhiteSpace(storageWarning))
+                MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         private void ClearDataButton_Click(object sender, RoutedEventArgs e)
         {
             if (MessageBox.Show("确定清空当前校准工作台的所有采集快照吗？", "确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            if (_calibrationRunning &&
+                !CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员清空了当前工作台数据", out string storageWarning))
+                MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             ResetMeasurementDisplay("实时数据已清空，采集连接保持当前状态", false);
         }
 
@@ -641,7 +656,21 @@ namespace UpperComInspectionInstrument2022.Views
                         }
                         dutHumidity = dutHumidityValue;
                     }
-                    CalibrationRunContext.Add(snapshot, dutTemperatureValue, dutHumidity);
+                    CalibrationSampleRecord formalRecord = CalibrationRunContext.Add(snapshot, dutTemperatureValue, dutHumidity);
+                    if (!CalibrationFileStorageService.Default.TryAppendSample(formalRecord, out string storageError))
+                    {
+                        _calibrationRunning = false;
+                        CalibrationTaskContext.HasCompletedCalibration = false;
+                        StartCalibrationButton.Content = "正式采样保存失败";
+                        StartCalibrationButton.IsEnabled = false;
+                        ViewResultButton.IsEnabled = false;
+                        FormalReadinessTextBlock.Text = "正式样本未能完整保存，已停止正式校准；实时测量仍保持运行。";
+                        FormalReadinessTextBlock.Foreground = Brushes.DarkRed;
+                        StatusTextBlock.Text = "正式采样保存异常，请检查本地数据目录和磁盘权限";
+                        UpdateParameterVisibility();
+                        MessageBox.Show(storageError, "正式样本保存失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
                     _calibrationSampleCount = CalibrationRunContext.Samples.Count;
                     int intervalSeconds = CalibrationTaskContext.IsConfigured
                         ? CalibrationTaskContext.SamplingIntervalSeconds
@@ -654,12 +683,31 @@ namespace UpperComInspectionInstrument2022.Views
                         if (_calibrationSampleCount >= plannedCount)
                         {
                             _calibrationRunning = false;
-                            CalibrationTaskContext.HasCompletedCalibration = true;
-                            StartCalibrationButton.Content = "校准采样完成";
-                            ViewResultButton.IsEnabled = true;
-                            FormalReadinessTextBlock.Text = "正式校准采样完成。";
-                            FormalReadinessTextBlock.Foreground = Brushes.DarkGreen;
-                            StatusTextBlock.Text = "校准采样完成，可查看结果与报告";
+                            CalibrationResultSummary result = CalibrationResultCalculator.Calculate();
+                            string completionError = result.Message;
+                            if (!result.IsValid)
+                                CalibrationFileStorageService.Default.TryMarkInterrupted("正式样本结果计算失败：" + result.Message, out _);
+                            bool archiveCompleted = result.IsValid && CalibrationFileStorageService.Default.TryCompleteJob(result, out completionError);
+                            if (!archiveCompleted)
+                            {
+                                CalibrationTaskContext.HasCompletedCalibration = false;
+                                StartCalibrationButton.Content = "校准结果保存失败";
+                                ViewResultButton.IsEnabled = false;
+                                FormalReadinessTextBlock.Text = completionError;
+                                FormalReadinessTextBlock.Foreground = Brushes.DarkRed;
+                                StatusTextBlock.Text = "正式样本已采满，但结果计算或本地归档失败";
+                                MessageBox.Show(FormalReadinessTextBlock.Text, "校准作业未完成", MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                            else
+                            {
+                                CalibrationTaskContext.HasCompletedCalibration = true;
+                                CalibrationTaskContext.Save();
+                                StartCalibrationButton.Content = "校准采样完成";
+                                ViewResultButton.IsEnabled = true;
+                                FormalReadinessTextBlock.Text = "正式校准采样、结果计算和本地归档均已完成。";
+                                FormalReadinessTextBlock.Foreground = Brushes.DarkGreen;
+                                StatusTextBlock.Text = $"校准作业已保存：{CalibrationFileStorageService.Default.CurrentJobDirectory}";
+                            }
                             UpdateParameterVisibility();
                         }
                     }
@@ -912,6 +960,8 @@ namespace UpperComInspectionInstrument2022.Views
 
         private void OnAcquisitionError(Exception ex)
         {
+            if (_calibrationRunning)
+                CalibrationFileStorageService.Default.TryMarkInterrupted("巡检仪采集异常导致正式校准中断：" + ex.Message, out _);
             _deviceResponding = false;
             _requiredChannelsValid = false;
             _trendLooksStable = false;
