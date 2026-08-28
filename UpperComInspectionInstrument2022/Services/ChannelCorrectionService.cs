@@ -4,8 +4,15 @@ using UpperComInspectionInstrument2022.Models;
 
 namespace UpperComInspectionInstrument2022.Services
 {
+    /// <summary>
+    /// 解析并应用标准器证书给出的逐通道修正值。
+    /// 修正值只作用于本次任务选用的主温度或湿度通道，不修改协议原始寄存器数据。
+    /// </summary>
     public static class ChannelCorrectionService
     {
+        /// <summary>
+        /// 将“通道号:修正值”文本解析为字典，例如“1:0.02,2:-0.01”。
+        /// </summary>
         public static bool TryParse(string text, int maximumChannel, out Dictionary<int, double> corrections, out string error)
         {
             corrections = new Dictionary<int, double>();
@@ -34,6 +41,9 @@ namespace UpperComInspectionInstrument2022.Services
             return true;
         }
 
+        /// <summary>
+        /// 保存每个通道的原始值，并把对应证书修正值叠加到有效测量值上。
+        /// </summary>
         public static void Apply(List<InspectionChannelData> channels, string temperatureText, string humidityText)
         {
             TryParse(temperatureText, 50, out Dictionary<int, double> temperatureCorrections, out _);

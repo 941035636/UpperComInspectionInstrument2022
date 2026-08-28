@@ -15,11 +15,16 @@ using System.Threading;
 
 namespace UpperComInspectionInstrument2022.Communication
 {
+    /// <summary>
+    /// 面向巡检仪的 Modbus RTU 主站客户端。
+    /// 该类串行化所有串口读写，负责组帧、完整读取、协议字段检查和 CRC16 校验。
+    /// </summary>
     public class ModbusRtuClient : IDisposable
     {
         private SerialPort? _serialPort;
         private readonly object _ioLock = new object();
 
+        /// <summary>串口对象存在且操作系统报告端口已经打开。</summary>
         public bool IsOpen
         {
             get
@@ -28,6 +33,7 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        /// <summary>当前已打开的串口名；未连接时为空。</summary>
         public string? PortName
         {
             get
@@ -36,6 +42,7 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        /// <summary>当前串口波特率；未连接时为 0。</summary>
         public int BaudRate
         {
             get
@@ -44,11 +51,14 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        /// <summary>最近一次发送帧的十六进制文本，用于现场排错。</summary>
         public string LastRequestHex { get; private set; } = string.Empty;
+        /// <summary>最近一次接收帧的十六进制文本，用于现场排错。</summary>
         public string LastResponseHex { get; private set; } = string.Empty;
 
         /// <summary>
-        /// 打开串口
+        /// 打开指定串口，并按巡检仪协议固定使用 8 位数据位、无校验、1 位停止位。
+        /// 如果此前已经打开其他端口，会先安全关闭旧端口。
         /// </summary>
         public void Open(
             string portName,
@@ -87,7 +97,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// 关闭串口
+        /// 线程安全地关闭并释放当前串口。
         /// </summary>
         public void Close()
         {
@@ -97,6 +107,7 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        /// <summary>执行实际关闭操作；调用者必须已经持有 <see cref="_ioLock"/>。</summary>
         private void CloseCore()
         {
             SerialPort? port = _serialPort;
@@ -118,7 +129,8 @@ namespace UpperComInspectionInstrument2022.Communication
     //ushort quantity)
     //    { }
         /// <summary>
-        /// 功能码03：读取保持寄存器
+        /// 使用功能码 03 读取一段连续保持寄存器。
+        /// 公共入口通过锁保证一次请求完整结束后才允许下一次请求进入。
         /// </summary>
         public ModbusResponse ReadHoldingRegisters(
             byte slaveAddress,
@@ -131,6 +143,10 @@ namespace UpperComInspectionInstrument2022.Communication
             }
         }
 
+        /// <summary>
+        /// 完成一次“发送请求—读取响应—校验—解析寄存器”的完整事务。
+        /// 任何可预期的通信失败都转换为 <see cref="ModbusResponse"/>，避免设备循环因偶发超时崩溃。
+        /// </summary>
         private ModbusResponse ReadHoldingRegistersCore(
             byte slaveAddress,
             ushort startAddress,
@@ -169,7 +185,7 @@ namespace UpperComInspectionInstrument2022.Communication
                 port.DiscardInBuffer();
                 port.DiscardOutBuffer();
 
-                // 发送
+                // 每次请求前丢弃旧缓冲区残留，避免上一次不完整帧污染本次响应。
                 port.Write(
                     request,
                     0,
@@ -214,7 +230,7 @@ namespace UpperComInspectionInstrument2022.Communication
                     header.Length,
                     remaining.Length);
 
-                // CRC检查
+                // 校验顺序从报文完整性到业务字段，便于给用户最准确的故障提示。
                 if (!CheckCrc(response))
                 {
                     return new ModbusResponse
@@ -315,7 +331,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// 构造功能码03请求
+        /// 构造固定 8 字节的功能码 03 请求帧，并在末尾写入低字节在前的 Modbus CRC。
         /// </summary>
         private byte[] BuildReadRequest(
             byte slaveAddress,
@@ -348,7 +364,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// 精确读取指定数量字节
+        /// 循环读取直到获得指定数量字节，因为 SerialPort.Read 一次不保证返回完整帧。
         /// </summary>
         private static byte[] ReadExact(SerialPort port, int length)
         {
@@ -376,7 +392,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// Modbus CRC16
+        /// 按 Modbus 多项式 0xA001 计算 CRC16。
         /// </summary>
         private ushort CalculateCrc(
             byte[] data,
@@ -409,7 +425,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// CRC校验
+        /// 将帧末尾收到的 CRC 与对前面所有字节重新计算的 CRC 比较。
         /// </summary>
         private bool CheckCrc(byte[] frame)
         {
@@ -438,7 +454,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// 十六进制显示
+        /// 把字节数组格式化为“01 03 02 ...”，用于日志和错误对话框。
         /// </summary>
         public static string BytesToHex(byte[] data)
         {
@@ -458,6 +474,7 @@ namespace UpperComInspectionInstrument2022.Communication
             return string.Join(" ", list);
         }
 
+        /// <summary>实现 <see cref="IDisposable"/>；释放客户端等价于关闭串口。</summary>
         public void Dispose()
         {
             Close();

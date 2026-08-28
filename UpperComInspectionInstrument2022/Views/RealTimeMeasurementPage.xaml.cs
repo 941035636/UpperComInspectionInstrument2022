@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
+using System.IO;
 using System.IO.Ports;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,11 +15,16 @@ using UpperComInspectionInstrument2022.ViewModels;
 
 namespace UpperComInspectionInstrument2022.Views
 {
+    /// <summary>
+    /// 校准工作台，将设备连接、连续实时测量、趋势观察、稳定确认和正式校准采样合并在同一页面。
+    /// 实时快照用于观察且只保留近期数据；正式样本按任务间隔另行留存并进入规范计算与文件归档。
+    /// </summary>
     public partial class RealTimeMeasurementPage : Page
     {
         private readonly RealTimeMeasurementViewModel _viewModel;
         private readonly InspectionDataAcquisitionService _acquisitionService;
         private readonly ModbusRtuClient _modbusClient;
+        private readonly RealtimeMeasurementFileStorageService _realtimeStorageService;
         private bool _deviceResponding;
         private bool _requiredChannelsValid;
         private bool _trendLooksStable;
@@ -28,11 +35,15 @@ namespace UpperComInspectionInstrument2022.Views
         private DataTable _measurementTable = new DataTable();
         private string _appliedTaskSignature = string.Empty;
 
+        /// <summary>
+        /// 初始化工作台，订阅共享采集服务事件，并建立点数联动、串口列表和任务状态。
+        /// </summary>
         public RealTimeMeasurementPage(InspectionDataAcquisitionService acquisitionService, ModbusRtuClient modbusClient)
         {
             InitializeComponent();
             _acquisitionService = acquisitionService ?? throw new ArgumentNullException(nameof(acquisitionService));
             _modbusClient = modbusClient ?? throw new ArgumentNullException(nameof(modbusClient));
+            _realtimeStorageService = RealtimeMeasurementFileStorageService.Default;
             _viewModel = new RealTimeMeasurementViewModel();
             DataContext = _viewModel;
 
@@ -60,16 +71,20 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateConnectionStatus();
             ViewResultButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             UpdateFormalConditionControls();
+            //UpdateRealtimeRecordStatus();
             _appliedTaskSignature = BuildTaskSignature();
+
+
         }
 
+        /// <summary>把已保存任务映射到工作台参数和规范提示；未配置任务时保留设备联调能力。</summary>
         private void ApplyTaskContext()
         {
             if (!CalibrationTaskContext.IsConfigured)
             {
                 TaskSummaryTextBlock.Text = "尚未配置任务，任务参数可在下方填写。";
                 TaskParameterPanel.Visibility = Visibility.Visible;
-                FormalRuleTextBlock.Text = "正式校准前必须先建立任务，实时测量可用于设备联调。";
+                //FormalRuleTextBlock.Text = "正式校准前必须先建立任务，实时测量可用于设备联调。";
                 return;
             }
 
@@ -95,16 +110,24 @@ namespace UpperComInspectionInstrument2022.Views
             string equipmentSummary = equipmentParts.Count == 0 ? "设备档案未填写（可选）" : string.Join(" · ", equipmentParts);
             TaskSummaryTextBlock.Text = $"{standard} · {type}\n{equipmentSummary}\n{setPoint} · 温度 {CalibrationTaskContext.TemperaturePointCount} 点 · 湿度 {CalibrationTaskContext.HumidityPointCount} 点\n环境 {CalibrationTaskContext.AmbientTemperature:0.###} ℃ / {CalibrationTaskContext.AmbientHumidity:0.###} %RH{pressure} · 正式样本 {CalibrationTaskContext.PlannedCount} 组 × {CalibrationTaskContext.SamplingIntervalSeconds} s";
             CalibrationStandardRule rule = CalibrationStandardRuleService.GetRule(CalibrationTaskContext.StandardIndex, CalibrationTaskContext.VolumeIndex, CalibrationTaskContext.IncludesHumidity);
-            FormalRuleTextBlock.Text = $"{rule.StabilityRuleText}\n正式采样：{rule.SamplingRuleText}";
+            //FormalRuleTextBlock.Text = $"{rule.StabilityRuleText}\n正式采样：{rule.SamplingRuleText}";
             DutDisplayTemperatureTextBox.Text = CalibrationTaskContext.DutDisplayTemperature?.ToString("0.###") ?? string.Empty;
             DutDisplayHumidityTextBox.Text = CalibrationTaskContext.DutDisplayHumidity?.ToString("0.###") ?? string.Empty;
             FormalSampleProgressTextBlock.Text = $"正式样本 0 / {CalibrationTaskContext.PlannedCount}";
             TaskParameterPanel.Visibility = Visibility.Collapsed;
         }
 
+        /// <summary>
+        /// 页面再次显示时同步任务配置。采集运行中不覆盖当前参数，保证切换页面不会打断测量。
+        /// </summary>
         public void RefreshTaskContext()
         {
-            if (_acquisitionService.IsRunning) return;
+            if (_acquisitionService.IsRunning)
+            {
+                SaveRealtimeRecordCheckBox.IsEnabled = false;
+                //UpdateRealtimeRecordStatus();
+                return;
+            }
 
             string newSignature = BuildTaskSignature();
             bool taskChanged = !string.Equals(_appliedTaskSignature, newSignature, StringComparison.Ordinal);
@@ -119,8 +142,11 @@ namespace UpperComInspectionInstrument2022.Views
                 ResetMeasurementDisplay("任务参数已更新，请按新测点数重新开始实时测量", true);
             }
             _appliedTaskSignature = newSignature;
+            SaveRealtimeRecordCheckBox.IsEnabled = true;
+            //UpdateRealtimeRecordStatus();
         }
 
+        /// <summary>生成影响工作台矩阵和采集解析的任务签名，用于判断是否必须清空旧实时数据。</summary>
         private static string BuildTaskSignature()
         {
             if (!CalibrationTaskContext.IsConfigured) return "UNCONFIGURED";
@@ -137,6 +163,7 @@ namespace UpperComInspectionInstrument2022.Views
                 CalibrationTaskContext.SetHumidity);
         }
 
+        /// <summary>按规范稳定依据显示计时确认或人工稳定确认控件。</summary>
         private void UpdateFormalConditionControls()
         {
             bool configured = CalibrationTaskContext.IsConfigured;
@@ -149,6 +176,7 @@ namespace UpperComInspectionInstrument2022.Views
             EvaluateFormalReadiness();
         }
 
+        /// <summary>记录“达到设定值”的起始时刻，或响应人工稳定确认变化。</summary>
         private void StabilityConfirmation_Changed(object sender, RoutedEventArgs e)
         {
             if (SetPointReachedCheckBox.IsChecked == true)
@@ -158,6 +186,7 @@ namespace UpperComInspectionInstrument2022.Views
             EvaluateFormalReadiness();
         }
 
+        /// <summary>重新评估正式采样条件，并同步按钮文字、可用状态和面向用户的原因说明。</summary>
         private bool EvaluateFormalReadiness()
         {
             bool ready = TryGetFormalReadiness(out string reason);
@@ -181,9 +210,14 @@ namespace UpperComInspectionInstrument2022.Views
                 StartCalibrationButton.ToolTip = reason;
             }
             StartCalibrationButton.IsEnabled = ready && !_calibrationRunning;
+
             return ready;
         }
 
+        /// <summary>
+        /// 汇总任务、设备响应、必需通道、外观检查、标准器证书和稳定确认等启动条件。
+        /// 趋势稳定只作为参考，不替代规范要求的操作人员确认。
+        /// </summary>
         private bool TryGetFormalReadiness(out string reason)
         {
             if (!CalibrationTaskContext.IsConfigured)
@@ -198,12 +232,8 @@ namespace UpperComInspectionInstrument2022.Views
                 blockers.Add("任务要求的温湿度测点尚未全部有效，请检查接线、点数和通道原始值");
             if (CalibrationTaskContext.StandardIndex == 1 && CalibrationTaskContext.AppearanceCheckIndex != 1)
                 blockers.Add("箱式炉外观与运行检查尚未确认“符合”");
-            if (string.IsNullOrWhiteSpace(CalibrationTaskContext.ReferencedStandardName) ||
-                string.IsNullOrWhiteSpace(CalibrationTaskContext.ReferencedCertificateNumber) ||
-                !CalibrationTaskContext.ReferencedValidityDate.HasValue)
-                blockers.Add("标准器名称、证书编号或有效期不完整，请同步或维护标准器资料");
-            else if (CalibrationTaskContext.ReferencedValidityDate.Value.Date < DateTime.Today)
-                blockers.Add($"标准器证书已于 {CalibrationTaskContext.ReferencedValidityDate:yyyy-MM-dd} 到期");
+            if (!CalibrationTaskContext.TryValidateReferencedStandardSettings(out string standardReferenceError))
+                blockers.Add(standardReferenceError);
 
             bool timedWait = CalibrationTaskContext.StandardIndex == 0 && CalibrationTaskContext.StabilityBasisIndex == 1;
             if (timedWait)
@@ -238,20 +268,20 @@ namespace UpperComInspectionInstrument2022.Views
             return true;
         }
 
+        /// <summary>检查任务固化的标准器身份、证书有效期和规范能力字段是否完整有效。</summary>
         private static bool HasInvalidTaskStandardReference() =>
-            string.IsNullOrWhiteSpace(CalibrationTaskContext.ReferencedStandardName) ||
-            string.IsNullOrWhiteSpace(CalibrationTaskContext.ReferencedCertificateNumber) ||
-            !CalibrationTaskContext.ReferencedValidityDate.HasValue ||
-            CalibrationTaskContext.ReferencedValidityDate.Value.Date < DateTime.Today;
+            !CalibrationTaskContext.TryValidateReferencedStandardSettings(out _);
 
+        /// <summary>不中断实时测量，将最新系统标准器资料重新固化到当前任务。</summary>
         private void RefreshStandardReferenceButton_Click(object sender, RoutedEventArgs e)
         {
-            if (CalibrationTaskContext.TrySnapshotCurrentStandardSettings(out string error))
+            if (CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
+                    CalibrationTaskContext.StandardIndex, CalibrationTaskContext.IncludesHumidity, out string error))
             {
                 CalibrationTaskContext.Save();
                 EvaluateFormalReadiness();
                 StatusTextBlock.Text = "已将系统设置中的标准器资料同步到当前任务";
-                MessageBox.Show("标准器名称、证书和有效期已同步到当前任务。实时测量数据未中断。", "标准器资料已同步", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("标准器身份、证书、能力和不确定度资料已同步到当前任务。实时测量数据未中断。", "标准器资料已同步", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -260,10 +290,16 @@ namespace UpperComInspectionInstrument2022.Views
                 "标准器资料未完成", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (result == MessageBoxResult.Yes && Application.Current.MainWindow is MainWindow mainWindow)
                 mainWindow.ShowSettingsPage();
+
+
+
+
         }
 
+        /// <summary>响应“刷新串口”按钮。</summary>
         private void RefreshPortsButton_Click(object sender, RoutedEventArgs e) => RefreshPorts();
 
+        /// <summary>枚举当前可用串口，并保留已经由本程序打开的端口。</summary>
         private void RefreshPorts()
         {
             string? current = PortComboBox.SelectedItem as string;
@@ -282,6 +318,7 @@ namespace UpperComInspectionInstrument2022.Views
             PortTextBlock.Text = PortComboBox.SelectedItem as string ?? "串口：未发现可用端口";
         }
 
+        /// <summary>短暂打开候选串口，排除已被其他程序独占的端口。</summary>
         private static bool CanOpenPort(string portName)
         {
             try
@@ -304,12 +341,14 @@ namespace UpperComInspectionInstrument2022.Views
             }
         }
 
+        /// <summary>测点数变化时联动中心点选项和实时数据矩阵列。</summary>
         private void PointCountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CenterPointComboBox != null) UpdateCenterPointOptions();
             if (MeasurementMatrixDataGrid != null) UpdateMeasurementMatrixColumns();
         }
 
+        /// <summary>按当前温湿度最大点数重建中心点下拉选项，并尽量保留原选择。</summary>
         private void UpdateCenterPointOptions()
         {
             string selected = CenterPointComboBox.SelectedItem as string ?? "1";
@@ -321,11 +360,15 @@ namespace UpperComInspectionInstrument2022.Views
             CenterPointComboBox.SelectedItem = CenterPointComboBox.Items.Contains(selected) ? selected : "1";
         }
 
+        /// <summary>校准类型变化时更新温度、湿度参数及矩阵显示。</summary>
         private void CalibrationTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CalibrationTypeComboBox != null) UpdateParameterVisibility();
         }
 
+        /// <summary>
+        /// 根据温度/湿度模式、任务锁定和采集状态控制参数可见性与可编辑性。
+        /// </summary>
         private void UpdateParameterVisibility()
         {
             string type = (CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度";
@@ -348,6 +391,10 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateMeasurementMatrixColumns();
         }
 
+        /// <summary>
+        /// 按当前任务测点数动态重建 DataTable 列，使“选择几个点就显示几个通道”。
+        /// 重建列会清空旧矩阵，避免不同点数的数据发生列错位。
+        /// </summary>
         private void UpdateMeasurementMatrixColumns()
         {
             if (MeasurementMatrixDataGrid == null || CalibrationTypeComboBox == null) return;
@@ -367,11 +414,13 @@ namespace UpperComInspectionInstrument2022.Views
             MeasurementMatrixDataGrid.ItemsSource = _measurementTable.DefaultView;
         }
 
+        /// <summary>读取点数下拉框，无法解析时安全返回 0。</summary>
         private static int GetPointCount(ComboBox comboBox)
         {
             return int.TryParse(comboBox.SelectedItem as string, out int count) ? Math.Max(0, count) : 0;
         }
 
+        /// <summary>把最新快照按温度点、湿度点顺序插入矩阵首行，最多保留 200 行。</summary>
         private void AppendMeasurementMatrixRow(MeasurementSnapshot snapshot)
         {
             if (_measurementTable.Columns.Count < 3) return;
@@ -397,6 +446,7 @@ namespace UpperComInspectionInstrument2022.Views
             while (_measurementTable.Rows.Count > 200) _measurementTable.Rows.RemoveAt(_measurementTable.Rows.Count - 1);
         }
 
+        /// <summary>连接或断开巡检仪串口；连接成功只表示端口已打开，收到有效响应后才显示设备已响应。</summary>
         private void ConnectDeviceButton_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -439,8 +489,12 @@ namespace UpperComInspectionInstrument2022.Views
             }
         }
 
+        /// <summary>
+        /// 校验串口和临时测量参数后启动连续实时采集。该操作不会自动开始正式校准。
+        /// </summary>
         private void StartAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
+            bool realtimeSessionStarted = false;
             try
             {
                 if (PortComboBox.SelectedItem is not string portName)
@@ -460,6 +514,19 @@ namespace UpperComInspectionInstrument2022.Views
                     _modbusClient.Open(portName, baudRate);
 
                 string calibrationType = (CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度";
+                if (SaveRealtimeRecordCheckBox.IsChecked == true)
+                {
+                    RealtimeMeasurementSessionInfo sessionInfo = BuildRealtimeMeasurementSessionInfo(
+                        portName,
+                        baudRate,
+                        slaveAddress,
+                        interval,
+                        calibrationType);
+                    if (!_realtimeStorageService.TryBeginSession(sessionInfo, out string realtimeStorageError))
+                        throw new InvalidOperationException(realtimeStorageError);
+                    realtimeSessionStarted = true;
+                }
+
                 _acquisitionService.Start(slaveAddress, interval, calibrationType);
                 _viewModel.IsAcquiring = true;
                 _trendLooksStable = false;
@@ -477,15 +544,51 @@ namespace UpperComInspectionInstrument2022.Views
                 StabilityTextBlock.Foreground = Brushes.DarkOrange;
                 StatusTextBlock.Text = "实时测量中，等待稳定条件确认";
                 UpdateConnectionStatus();
+                //UpdateRealtimeRecordStatus();
                 EvaluateFormalReadiness();
             }
             catch (Exception ex)
             {
+                if (realtimeSessionStarted)
+                    _realtimeStorageService.TryEndSession("启动失败", ex.Message, out _);
+                SaveRealtimeRecordCheckBox.IsEnabled = true;
+                //UpdateRealtimeRecordStatus(ex.Message);
                 UpdateConnectionStatus();
                 MessageBox.Show(ex.Message, "启动实时测量失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
+        /// <summary>把当前连接、测点和可选任务信息冻结为本次普通实时测量会话的摘要。</summary>
+        private RealtimeMeasurementSessionInfo BuildRealtimeMeasurementSessionInfo(
+            string portName,
+            int baudRate,
+            byte slaveAddress,
+            int interval,
+            string calibrationType)
+        {
+            string standard = CalibrationTaskContext.IsConfigured
+                ? CalibrationTaskContext.StandardIndex == 1 ? "JJF 1376-2012" : "JJF 1101-2019"
+                : "未建立任务（设备联调）";
+            return new RealtimeMeasurementSessionInfo
+            {
+                PortName = portName,
+                BaudRate = baudRate,
+                SlaveAddress = slaveAddress,
+                IntervalMilliseconds = interval,
+                CalibrationType = calibrationType,
+                SensorType = SensorTypeComboBox.SelectedItem?.ToString() ?? string.Empty,
+                TemperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0,
+                HumidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0,
+                HasCalibrationTask = CalibrationTaskContext.IsConfigured,
+                Standard = standard,
+                EquipmentName = CalibrationTaskContext.EquipmentName,
+                EquipmentSerialNumber = CalibrationTaskContext.EquipmentSerialNumber
+            };
+        }
+
+        /// <summary>
+        /// 在实时采集保持运行的前提下启动正式校准：读取被校设备示值、清空正式样本并建立本地作业。
+        /// </summary>
         private void StartCalibrationButton_Click(object sender, RoutedEventArgs e)
         {
             if (!EvaluateFormalReadiness())
@@ -518,6 +621,7 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateParameterVisibility();
         }
 
+        /// <summary>读取本次正式样本要配对的被校设备温湿度示值，并保存到任务上下文。</summary>
         private bool TryReadDutDisplays(out double? temperature, out double? humidity)
         {
             temperature = null;
@@ -542,12 +646,15 @@ namespace UpperComInspectionInstrument2022.Views
             return true;
         }
 
+        /// <summary>停止实时采集并释放串口；若正式校准尚未完成，同时将本地作业标记为中断。</summary>
         private void StopAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
             // 只有用户明确点击“暂停/停止”时才停止后台采集。
             string storageWarning = string.Empty;
+            string realtimeStorageWarning = string.Empty;
             if (_calibrationRunning)
                 CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
+            _realtimeStorageService.TryEndSession("已停止", "操作人员停止实时测量", out realtimeStorageWarning);
             _acquisitionService.Stop();
             _viewModel.IsAcquiring = false;
             _calibrationRunning = false;
@@ -565,10 +672,14 @@ namespace UpperComInspectionInstrument2022.Views
             StabilityTextBlock.Foreground = Brushes.DarkOrange;
             StatusTextBlock.Text = "已暂停实时测量";
             UpdateConnectionStatus();
+            //UpdateRealtimeRecordStatus(realtimeStorageWarning);
             if (!string.IsNullOrWhiteSpace(storageWarning))
                 MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!string.IsNullOrWhiteSpace(realtimeStorageWarning))
+                MessageBox.Show(realtimeStorageWarning, "实时记录状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
+        /// <summary>经用户确认后清空工作台实时快照和正式样本，但保持当前设备连接状态。</summary>
         private void ClearDataButton_Click(object sender, RoutedEventArgs e)
         {
             if (MessageBox.Show("确定清空当前校准工作台的所有采集快照吗？", "确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -578,6 +689,7 @@ namespace UpperComInspectionInstrument2022.Views
             ResetMeasurementDisplay("实时数据已清空，采集连接保持当前状态", false);
         }
 
+        /// <summary>统一重置矩阵、曲线、摘要和正式采样状态，并可选择同时重置设备响应标志。</summary>
         private void ResetMeasurementDisplay(string status, bool resetDeviceState)
         {
             _viewModel.ClearSnapshots();
@@ -605,6 +717,10 @@ namespace UpperComInspectionInstrument2022.Views
             EvaluateFormalReadiness();
         }
 
+        /// <summary>
+        /// 处理一组完整设备响应：应用证书修正、生成实时快照、刷新 UI，
+        /// 并在正式采样到点时把同一快照持久化；达到计划组数后计算并完成归档。
+        /// </summary>
         private void OnDataAcquired(long acquisitionId, List<InspectionChannelData> data)
         {
             _deviceResponding = true;
@@ -612,6 +728,7 @@ namespace UpperComInspectionInstrument2022.Views
             {
                 if (CalibrationTaskContext.IsConfigured)
                 {
+                    // 修正值必须先于矩阵、稳定性和正式样本计算应用，同时 RawValue 仍保留修正前值。
                     ChannelCorrectionService.Apply(data,
                         CalibrationTaskContext.ReferencedTemperatureCorrections,
                         CalibrationTaskContext.ReferencedHumidityCorrections);
@@ -639,6 +756,21 @@ namespace UpperComInspectionInstrument2022.Views
                 EvaluateStability();
                 DrawMeasurementChart();
 
+                // 普通实时记录独立于正式校准样本：每组完整响应立即保存，即使尚未启动正式校准也可追溯。
+                if (_realtimeStorageService.IsActive)
+                {
+                    if (!_realtimeStorageService.TryAppendSnapshot(snapshot, out string realtimeStorageError))
+                    {
+                        //UpdateRealtimeRecordStatus(realtimeStorageError);
+                        MessageBox.Show(realtimeStorageError, "实时记录保存失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        //UpdateRealtimeRecordStatus();
+                    }
+                }
+
+                // 实时快照每轮都刷新；只有到达正式采样时刻才进入以下留存流程。
                 if (_calibrationRunning && DateTime.Now >= _nextCalibrationSampleAt)
                 {
                     if (!double.TryParse(DutDisplayTemperatureTextBox.Text.Trim(), out double dutTemperatureValue) || !double.IsFinite(dutTemperatureValue))
@@ -657,6 +789,7 @@ namespace UpperComInspectionInstrument2022.Views
                         dutHumidity = dutHumidityValue;
                     }
                     CalibrationSampleRecord formalRecord = CalibrationRunContext.Add(snapshot, dutTemperatureValue, dutHumidity);
+                    // 先确认样本成功落盘，再增加页面上的正式样本进度。
                     if (!CalibrationFileStorageService.Default.TryAppendSample(formalRecord, out string storageError))
                     {
                         _calibrationRunning = false;
@@ -682,6 +815,7 @@ namespace UpperComInspectionInstrument2022.Views
                         StatusTextBlock.Text = $"正式校准采样：{_calibrationSampleCount} / {plannedCount} 组；下一组间隔 {intervalSeconds} s";
                         if (_calibrationSampleCount >= plannedCount)
                         {
+                            // 计划样本完成后执行“计算→结果落盘→任务完成标记”，任何一步失败都不宣称完成。
                             _calibrationRunning = false;
                             CalibrationResultSummary result = CalibrationResultCalculator.Calculate();
                             string completionError = result.Message;
@@ -724,6 +858,7 @@ namespace UpperComInspectionInstrument2022.Views
             });
         }
 
+        /// <summary>更新当前值、有效通道质量、中心点值和异常详情提示。</summary>
         private void UpdateMeasurementSummary(MeasurementSnapshot snapshot)
         {
             CurrentSequenceTextBlock.Text = snapshot.Sequence.ToString();
@@ -781,6 +916,7 @@ namespace UpperComInspectionInstrument2022.Views
                 : $"CH{temperatureCenter}  {centerTemperatureText}";
         }
 
+        /// <summary>把一组有效通道汇总为平均值及最小～最大范围。</summary>
         private static string FormatSummary(List<InspectionChannelData> channels, string label, string unit)
         {
             if (channels.Count == 0) return $"{label}：无有效数据";
@@ -797,6 +933,7 @@ namespace UpperComInspectionInstrument2022.Views
             return $"{prefix} 均值 {sum / channels.Count:F3} {unit}\n{min:F2}～{max:F2}";
         }
 
+        /// <summary>按业务角色生成用户能理解的通道名称。</summary>
         private static string GetChannelDisplayName(InspectionChannelData channel) => channel.Role switch
         {
             ChannelRole.PrimaryTemperature => $"温度{channel.Channel}",
@@ -804,6 +941,10 @@ namespace UpperComInspectionInstrument2022.Views
             _ => $"湿度探头温度{channel.Channel}"
         };
 
+        /// <summary>
+        /// 使用最近 5 组完整测点平均值计算趋势极差。
+        /// 此结果只提示“趋势是否稳定”，正式采样仍必须满足任务中的规范确认条件。
+        /// </summary>
         private void EvaluateStability()
         {
             if (_viewModel.Snapshots.Count < 5)
@@ -841,6 +982,7 @@ namespace UpperComInspectionInstrument2022.Views
             EvaluateFormalReadiness();
         }
 
+        /// <summary>当指定类型的所有必需测点均有效时，计算一组空间平均值并追加到目标序列。</summary>
         private static void AddAverage(List<InspectionChannelData> channels, ChannelType type, int pointCount, List<double> target)
         {
             double sum = 0;
@@ -854,6 +996,7 @@ namespace UpperComInspectionInstrument2022.Views
             if (count == pointCount && count > 0) target.Add(sum / count);
         }
 
+        /// <summary>计算最大值与最小值之差；无有效值时返回正无穷表示不能判稳。</summary>
         private static double CalculateRange(List<double> values)
         {
             if (values.Count == 0) return double.PositiveInfinity;
@@ -863,11 +1006,14 @@ namespace UpperComInspectionInstrument2022.Views
             return max - min;
         }
 
+        /// <summary>当前界面模式是否包含主温度通道。</summary>
         private bool HasTemperatureMode() => ((CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度").Contains("温度");
+        /// <summary>当前界面模式是否包含湿度通道；已配置任务优先以任务上下文为准。</summary>
         private bool HasHumidityMode() => CalibrationTaskContext.IsConfigured
             ? CalibrationTaskContext.IncludesHumidity
             : ((CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度").Contains("湿度");
 
+        /// <summary>取得正式样本计划数；已配置任务优先使用固化值。</summary>
         private bool TryGetPlannedCount(out int count)
         {
             if (CalibrationTaskContext.IsConfigured)
@@ -878,6 +1024,7 @@ namespace UpperComInspectionInstrument2022.Views
             return int.TryParse(CalibrationCountComboBox.SelectedItem as string, out count);
         }
 
+        /// <summary>重绘最近 60 组温度、湿度空间平均趋势及当前数值范围。</summary>
         private void DrawMeasurementChart()
         {
             MeasurementChartCanvas.Children.Clear();
@@ -915,6 +1062,7 @@ namespace UpperComInspectionInstrument2022.Views
             ChartScaleTextBlock.Text = $"{FormatChartRange(temperatures, "T", "℃")}{(temperaturePointCount > 0 && humidityPointCount > 0 ? "  ·  " : string.Empty)}{FormatChartRange(humidities, "H", "%RH")}";
         }
 
+        /// <summary>将一条数值序列按自身最小/最大值缩放后绘制为折线。</summary>
         private void AddChartLine(List<double> values, double width, double height, Brush brush)
         {
             List<double> valid = values.FindAll(v => !double.IsNaN(v) && !double.IsInfinity(v));
@@ -936,6 +1084,7 @@ namespace UpperComInspectionInstrument2022.Views
             MeasurementChartCanvas.Children.Add(line);
         }
 
+        /// <summary>生成趋势图右上角的当前量程文本。</summary>
         private static string FormatChartRange(List<double> values, string label, string unit)
         {
             List<double> valid = values.FindAll(value => double.IsFinite(value));
@@ -946,8 +1095,10 @@ namespace UpperComInspectionInstrument2022.Views
             return $"{label} {min:F2}～{max:F2} {unit}";
         }
 
+        /// <summary>画布尺寸变化后按新尺寸重绘趋势线。</summary>
         private void MeasurementChartCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawMeasurementChart();
 
+        /// <summary>采集开始/停止时统一锁定或解锁会影响执行流程的参数。</summary>
         private void SetExecutionParametersEnabled(bool enabled)
         {
             SlaveAddressTextBox.IsEnabled = enabled;
@@ -955,13 +1106,16 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationCountComboBox.IsEnabled = enabled;
             CalibrationIntervalTextBox.IsEnabled = enabled && !CalibrationTaskContext.IsConfigured;
             CenterIntervalTextBox.IsEnabled = enabled && !CalibrationTaskContext.IsConfigured;
+            SaveRealtimeRecordCheckBox.IsEnabled = enabled;
             UpdateParameterVisibility();
         }
 
+        /// <summary>处理不可继续的采集异常：中断正式作业、停止循环、释放串口并恢复界面。</summary>
         private void OnAcquisitionError(Exception ex)
         {
             if (_calibrationRunning)
                 CalibrationFileStorageService.Default.TryMarkInterrupted("巡检仪采集异常导致正式校准中断：" + ex.Message, out _);
+            _realtimeStorageService.TryEndSession("采集异常", ex.Message, out _);
             _deviceResponding = false;
             _requiredChannelsValid = false;
             _trendLooksStable = false;
@@ -978,12 +1132,14 @@ namespace UpperComInspectionInstrument2022.Views
                 BaudRateComboBox.IsEnabled = true;
                 SetExecutionParametersEnabled(true);
                 UpdateConnectionStatus();
+                //UpdateRealtimeRecordStatus(ex.Message);
                 EvaluateFormalReadiness();
                 StatusTextBlock.Text = "采集异常，已停止并释放串口";
                 MessageBox.Show(ex.Message, "采集异常", MessageBoxButton.OK, MessageBoxImage.Error);
             });
         }
 
+        /// <summary>在未采集时返回任务配置；采集运行中阻止修改任务参数。</summary>
         private void BackHomeButton_Click(object sender, RoutedEventArgs e)
         {
             if (_acquisitionService.IsRunning)
@@ -996,6 +1152,7 @@ namespace UpperComInspectionInstrument2022.Views
                 mainWindow.ShowTaskConfigurationPage();
         }
 
+        /// <summary>正式校准完成后进入结果页。</summary>
         private void ViewResultButton_Click(object sender, RoutedEventArgs e)
         {
             if (!CalibrationTaskContext.HasCompletedCalibration)
@@ -1008,6 +1165,7 @@ namespace UpperComInspectionInstrument2022.Views
                 mainWindow.ShowResultPage();
         }
 
+        /// <summary>同时刷新顶部状态、设备卡片和连接按钮，区分“串口打开”与“设备已响应”。</summary>
         private void UpdateConnectionStatus()
         {
             bool connected = _modbusClient.IsOpen;
@@ -1021,5 +1179,59 @@ namespace UpperComInspectionInstrument2022.Views
             BaudRateTextBlock.Text = connected ? $"波特率：{_modbusClient.BaudRate}" : "波特率：未设置";
             ConnectDeviceButton.Content = connected ? "断开巡检仪" : "连接巡检仪";
         }
+
+        /// <summary>打开当前或最近一次实时测量会话目录；尚未测量时打开实时记录根目录。</summary>
+        private void OpenRealtimeRecordButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string directory = _realtimeStorageService.CurrentSessionDirectory ?? _realtimeStorageService.DataRootPath;
+                Directory.CreateDirectory(directory);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = directory,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "无法打开实时记录目录", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>以短状态提示记录是否正在写盘，完整路径放在悬停提示中，避免挤占控制栏。</summary>
+        //private void UpdateRealtimeRecordStatus(string? warning = null)
+        //{
+        //    string? directory = _realtimeStorageService.CurrentSessionDirectory;
+        //    //RealtimeRecordStatusTextBlock.ToolTip = directory ?? _realtimeStorageService.DataRootPath;
+
+        //    if (!string.IsNullOrWhiteSpace(warning))
+        //    {
+        //        RealtimeRecordStatusTextBlock.Text = "实时记录异常：" + warning.Split('\n')[0];
+        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkRed;
+        //        return;
+        //    }
+        //    if (_realtimeStorageService.IsActive)
+        //    {
+        //        RealtimeRecordStatusTextBlock.Text = $"实时记录中：已写入 {_realtimeStorageService.SavedSnapshotCount} 组";
+        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+        //        return;
+        //    }
+        //    if (_acquisitionService.IsRunning && SaveRealtimeRecordCheckBox.IsChecked != true)
+        //    {
+        //        RealtimeRecordStatusTextBlock.Text = "本次实时测量未启用文件记录";
+        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkOrange;
+        //        return;
+        //    }
+        //    if (!string.IsNullOrWhiteSpace(directory))
+        //    {
+        //        RealtimeRecordStatusTextBlock.Text = $"最近实时记录：{_realtimeStorageService.SavedSnapshotCount} 组";
+        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+        //        return;
+        //    }
+
+        //    RealtimeRecordStatusTextBlock.Text = "开始实时测量后，每次完整响应立即写盘";
+        //    RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+        //}
     }
 }

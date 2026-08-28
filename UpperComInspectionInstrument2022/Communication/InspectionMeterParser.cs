@@ -29,6 +29,7 @@
                         最终结果
 
 ******************************************************************/
+using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -43,17 +44,31 @@ namespace UpperComInspectionInstrument2022.Communication
     /// </summary>
     public class InspectionMeterData
     {
+        /// <summary>测量数据到达软件的时间。</summary>
         public DateTime Timestamp { get; set; }
 
+        /// <summary>解析后的温度值，单位为 ℃。</summary>
         public double Temperature { get; set; }
 
+        /// <summary>解析后的相对湿度值，单位为 %RH。</summary>
         public double Humidity { get; set; }
 
+        /// <summary>解析前的原始报文文本，用于调试和追溯。</summary>
         public string RawData { get; set; } = string.Empty;
 
+        /// <summary>报文格式和值域是否通过检查。</summary>
         public bool IsValid { get; set; }
     }
+
+    /// <summary>
+    /// 早期文本协议解析器的占位类型。
+    /// 当前巡检仪使用 Modbus RTU，实际解析由 <see cref="Services.InspectionMeterService"/> 完成。
+    /// </summary>
     internal class InspectionMeterParser
     {
+
+
     }
-}
+
+
+    }

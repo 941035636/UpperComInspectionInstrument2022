@@ -7,7 +7,9 @@ namespace UpperComInspectionInstrument2022.Models
     /// </summary>
     public enum ChannelType
     {
+        /// <summary>温度量，单位通常为 ℃。</summary>
         Temperature,
+        /// <summary>相对湿度量，单位通常为 %RH。</summary>
         Humidity
     }
 
@@ -17,8 +19,11 @@ namespace UpperComInspectionInstrument2022.Models
     /// </summary>
     public enum ChannelRole
     {
+        /// <summary>参与温度布点和温度结果计算的主温度通道。</summary>
         PrimaryTemperature,
+        /// <summary>参与湿度布点和湿度结果计算的相对湿度通道。</summary>
         Humidity,
+        /// <summary>湿度探头内部用于补偿的伴随温度，不计入主温度测点。</summary>
         HumidityProbeTemperature
     }
 
@@ -29,9 +34,13 @@ namespace UpperComInspectionInstrument2022.Models
     /// </summary>
     public enum DataStatus
     {
+        /// <summary>值可用于显示和后续计算。</summary>
         Valid,
+        /// <summary>值未通过一般有效性检查。</summary>
         Invalid,
+        /// <summary>寄存器或字节数据无法按协议解析。</summary>
         ParseError,
+        /// <summary>设备返回断线、超量程等约定的特殊值。</summary>
         DeviceSpecialValue
     }
 
@@ -50,6 +59,7 @@ namespace UpperComInspectionInstrument2022.Models
         /// </summary>
         public ChannelType Type { get; set; }
 
+        /// <summary>该通道在校准业务中的角色。</summary>
         public ChannelRole Role { get; set; } = ChannelRole.PrimaryTemperature;
 
         /// <summary>
@@ -63,6 +73,7 @@ namespace UpperComInspectionInstrument2022.Models
         /// <summary>本任务标准器快照中配置的通道修正值。</summary>
         public double CorrectionValue { get; set; }
 
+        /// <summary>当前值是否已经叠加标准器证书中的通道修正值。</summary>
         public bool HasAppliedCorrection { get; set; }
 
         /// <summary>
@@ -79,6 +90,7 @@ namespace UpperComInspectionInstrument2022.Models
         /// 第二个16位寄存器地址
         /// </summary>
         public ushort RegisterAddress2 { get; set; }
+
 
         /// <summary>
         /// 第一个寄存器原始值
@@ -115,6 +127,9 @@ namespace UpperComInspectionInstrument2022.Models
         /// 本次采集时间
         /// </summary>
         public DateTime Timestamp { get; set; }
+
+
+
 
         /// <summary>
         /// 所属采集批次

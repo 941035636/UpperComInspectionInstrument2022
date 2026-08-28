@@ -361,3 +361,12 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Local verification and source-analysis artifacts
+/verify-build/
+/对话备份/
+/tmp/HardwareProbe/
+/tmp/figure-extract/
+/tmp/pdfs/
+/tmp/spreadsheet-qa-*/
+/tmp/read-protocol.ps1

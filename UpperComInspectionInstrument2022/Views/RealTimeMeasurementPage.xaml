@@ -72,11 +72,11 @@
             <Border Grid.Column="0" Grid.Row="0" Background="#FFFFFF" CornerRadius="7" Padding="18,13" Margin="0,0,12,10" BorderBrush="#E2E8F0" BorderThickness="1">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="1.55*"/><ColumnDefinition Width="1.3*"/><ColumnDefinition Width="1.35*"/><ColumnDefinition Width="1.15*"/><ColumnDefinition Width="1.2*"/></Grid.ColumnDefinitions>
-                    <StackPanel><TextBlock Text="当前测量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="LiveValueSummaryTextBlock" Text="等待设备数据" FontSize="14" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
-                    <StackPanel Grid.Column="1"><TextBlock Text="趋势预检" Style="{StaticResource CaptionText}"/><TextBlock x:Name="StabilityTextBlock" Text="未开始" FontSize="14" FontWeight="Bold" Foreground="#B45309" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
-                    <StackPanel Grid.Column="2"><TextBlock Text="中心点" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CenterSummaryTextBlock" Text="点 1：- / -" FontSize="14" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
-                    <StackPanel Grid.Column="3"><TextBlock Text="数据质量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="QualitySummaryTextBlock" Text="任务通道 0/0" FontSize="15" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,10,0" TextWrapping="Wrap"/></StackPanel>
-                    <StackPanel Grid.Column="4"><TextBlock Text="最新采集" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CurrentTimeTextBlock" Text="-" FontSize="15" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel><TextBlock Text="当前测量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="LiveValueSummaryTextBlock" Text="等待设备数据" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel Grid.Column="1"><TextBlock Text="趋势预检" Style="{StaticResource CaptionText}"/><TextBlock x:Name="StabilityTextBlock" Text="未开始" FontSize="12" FontWeight="Bold" Foreground="#B45309" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="中心点" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CenterSummaryTextBlock" Text="点 1：- / -" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel Grid.Column="3"><TextBlock Text="数据质量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="QualitySummaryTextBlock" Text="任务通道 0/0" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,10,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel Grid.Column="4"><TextBlock Text="最新采集" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CurrentTimeTextBlock" Text="-" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
                 </Grid>
             </Border>
 
@@ -137,11 +137,22 @@
                         </Grid>
                         <Button Content="刷新可用串口" Click="RefreshPortsButton_Click" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Stretch" Margin="0,9,0,0"/>
 
+                        <Border Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <CheckBox x:Name="SaveRealtimeRecordCheckBox" Content="自动保存实时记录" IsChecked="True" FontWeight="SemiBold" Foreground="#166534"/>
+                                <DockPanel Margin="0,7,0,0">
+                                    <!-- <Button x:Name="OpenRealtimeRecordButton" DockPanel.Dock="Right" Content="打开目录" Click="OpenRealtimeRecordButton_Click" Style="{StaticResource SecondaryButton}" Padding="9,4" Margin="8,0,0,0"/>
+                                   <TextBlock x:Name="RealtimeRecordStatusTextBlock" Text="开始实时测量后，每次完整响应会立即写入本地" Foreground="#15803D" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                -->
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock Text="执行控制" FontWeight="Bold" Foreground="#334155" Margin="0,14,0,7"/>
                         <Button x:Name="ConnectDeviceButton" Content="连接巡检仪" Height="36" Click="ConnectDeviceButton_Click" Style="{StaticResource SecondaryButton}"/>
-                        <Button x:Name="StartAcquisitionButton" Content="开始实时测量" Height="40" Margin="0,8,0,0" IsEnabled="False" Click="StartAcquisitionButton_Click" Background="#2563EB" Foreground="White" BorderThickness="0" FontWeight="SemiBold"/>
-                        <Button x:Name="StartCalibrationButton" Content="启动校准采样" Height="44" Margin="0,8,0,0" IsEnabled="False" Click="StartCalibrationButton_Click" Background="#059669" Foreground="White" BorderThickness="0" FontWeight="Bold"/>
-                        <Button x:Name="ViewResultButton" Content="查看结果与报告" Height="38" Margin="0,8,0,0" IsEnabled="False" Click="ViewResultButton_Click" Background="#0F172A" Foreground="White" BorderThickness="0" FontWeight="SemiBold"/>
+                        <Button x:Name="StartAcquisitionButton" Content="开始实时测量" Height="40" Margin="0,8,0,0" IsEnabled="False" Click="StartAcquisitionButton_Click" Background="#2563EB" Foreground="Black" BorderThickness="0" FontWeight="SemiBold"/>
+                        <Button x:Name="StartCalibrationButton" Content="启动校准采样" Height="44" Margin="0,8,0,0" IsEnabled="False" Click="StartCalibrationButton_Click" Background="#059669" Foreground="Black" BorderThickness="0" FontWeight="Bold"/>
+                        <Button x:Name="ViewResultButton" Content="查看结果与报告" Height="38" Margin="0,8,0,0" IsEnabled="False" Click="ViewResultButton_Click" Background="#0F172A" Foreground="Black" BorderThickness="0" FontWeight="SemiBold"/>
                         <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button x:Name="StopAcquisitionButton" Content="暂停/停止" Height="34" IsEnabled="False" Click="StopAcquisitionButton_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,4,0"/><Button x:Name="ClearDataButton" Grid.Column="1" Content="清空数据" Height="34" Click="ClearDataButton_Click" Style="{StaticResource SecondaryButton}" Margin="4,0,0,0"/></Grid>
 
                         <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" Padding="12" Margin="0,14,0,0">
@@ -154,13 +165,13 @@
                         <Border x:Name="FormalReadinessPanel" Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Padding="12" Margin="0,10,0,0">
                             <StackPanel>
                                 <TextBlock Text="正式校准条件" FontWeight="Bold" Foreground="#92400E"/>
-                                <TextBlock x:Name="FormalRuleTextBlock" Text="先建立任务，再按规范确认稳定状态。" TextWrapping="Wrap" Foreground="#78350F" FontSize="12" Margin="0,6,0,0"/>
+
                                 <CheckBox x:Name="SetPointReachedCheckBox" Content="设备已达到设定值（从此刻开始稳定计时）" Margin="0,9,0,0" Checked="StabilityConfirmation_Changed" Unchecked="StabilityConfirmation_Changed"/>
                                 <CheckBox x:Name="ConfirmStableCheckBox" Content="已依据说明书/设备状态确认稳定" Margin="0,7,0,0" Checked="StabilityConfirmation_Changed" Unchecked="StabilityConfirmation_Changed"/>
                                 <TextBlock x:Name="FormalReadinessTextBlock" Text="等待有效数据和稳定确认" TextWrapping="Wrap" Foreground="#B45309" FontWeight="SemiBold" Margin="0,8,0,0"/>
                                 <Button x:Name="RefreshStandardReferenceButton" Content="同步/维护标准器资料" Visibility="Collapsed" Click="RefreshStandardReferenceButton_Click" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0"/>
                                 <Separator Margin="0,10,0,8"/>
-                                <TextBlock Text="被校设备示值（随下一组正式样本记录，可更新）" FontWeight="SemiBold" Foreground="#334155" TextWrapping="Wrap"/>
+                                <TextBlock Text="被校设备示值" FontWeight="SemiBold" Foreground="#334155" TextWrapping="Wrap"/>
                                 <Grid Margin="0,7,0,0">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <TextBlock Text="温度" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"/><TextBox x:Name="DutDisplayTemperatureTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" Margin="0"/>

@@ -5,14 +5,20 @@ using UpperComInspectionInstrument2022.Services;
 
 namespace UpperComInspectionInstrument2022.Views
 {
+    /// <summary>
+    /// 系统级资料设置页，用于维护标准器、证书、修正值和不确定度等跨任务复用的信息。
+    /// 单次被校设备与委托信息不在本页维护。
+    /// </summary>
     public partial class DeviceView : Page
     {
+        /// <summary>初始化页面并从 <see cref="SystemSettingsContext"/> 回填当前设置。</summary>
         public DeviceView()
         {
             InitializeComponent();
             LoadSettings();
         }
 
+        /// <summary>校验所有数值与通道修正格式，通过后保存到本地系统设置文件。</summary>
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             if (!TryReadPositiveDouble(TemperatureResolutionTextBox, "温度分辨力", out double temperatureResolution) ||
@@ -64,6 +70,7 @@ namespace UpperComInspectionInstrument2022.Views
             StatusTextBlock.Foreground = System.Windows.Media.Brushes.DarkGreen;
         }
 
+        /// <summary>把当前系统上下文逐项显示到输入控件。</summary>
         private void LoadSettings()
         {
             StandardNameTextBox.Text = SystemSettingsContext.StandardName;
@@ -90,6 +97,7 @@ namespace UpperComInspectionInstrument2022.Views
             HumidityCoverageTextBox.Text = SystemSettingsContext.HumidityCoverage.ToString("0.###");
         }
 
+        /// <summary>读取必须大于 0 的有限数；失败时提示并聚焦对应输入框。</summary>
         private static bool TryReadPositiveDouble(TextBox textBox, string name, out double value)
         {
             if (double.TryParse(textBox.Text, out value) && double.IsFinite(value) && value > 0) return true;
@@ -98,6 +106,7 @@ namespace UpperComInspectionInstrument2022.Views
             return false;
         }
 
+        /// <summary>读取允许为 0、但不能为负数的有限数。</summary>
         private static bool TryReadNonNegativeDouble(TextBox textBox, string name, out double value)
         {
             if (double.TryParse(textBox.Text, out value) && double.IsFinite(value) && value >= 0) return true;

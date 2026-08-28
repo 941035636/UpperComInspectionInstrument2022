@@ -45,11 +45,16 @@ namespace UpperComInspectionInstrument2022.Services
         public string ResultItemsText { get; init; } = string.Empty;
     }
 
+    /// <summary>
+    /// 根据所选规范、设备容积分类和校准类型生成任务规则。
+    /// 页面只消费这里的规则，不再分别写死测点数、采样次数和环境条件。
+    /// </summary>
     public static class CalibrationStandardRuleService
     {
         public const int Jjf1101Index = 0;
         public const int Jjf1376Index = 1;
 
+        /// <summary>取得当前任务对应的完整规范规则对象。</summary>
         public static CalibrationStandardRule GetRule(int standardIndex, int volumeIndex, bool includesHumidity)
         {
             return standardIndex == Jjf1376Index
@@ -57,6 +62,7 @@ namespace UpperComInspectionInstrument2022.Services
                 : CreateJjf1101(volumeIndex, includesHumidity);
         }
 
+        /// <summary>创建 JJF 1101-2019 环境试验设备规则，并按 2 m³ 容积分界映射默认布点。</summary>
         private static CalibrationStandardRule CreateJjf1101(int volumeIndex, bool includesHumidity)
         {
             bool large = volumeIndex == 1;
@@ -99,7 +105,7 @@ namespace UpperComInspectionInstrument2022.Services
                 PointLayoutModeOptions = new[]
                 {
                     "按规范默认空间布点",
-                    "按实际工作位置调整（点数可自定义）",
+                    "按实际工作位置调整（点数可自定义，需说明偏离）",
                     "极端容积按需调整点数（<0.05 / >50 m³）"
                 },
                 SupportsCustomPointLayout = true,
@@ -107,11 +113,11 @@ namespace UpperComInspectionInstrument2022.Services
                 EditablePointCountModeIndexes = new[] { 1, 2 },
                 RequiresExtremeVolumeForCustomPointCount = true,
                 PointLayoutText = large
-                    ? "上、中、下三层布点：温度 15 点、湿度 4 点；温度 15 点和湿度 O 点位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/C/O 映射，O 默认 CH4，须按实际接线确认。"
-                    : "上、中、下三层布点：温度 9 点、湿度 3 点；温度 5 点和湿度 O 点位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/O 映射，O 默认 CH3，须按实际接线确认。",
+                    ? "上、中、下三层布点：温度测量点15个、湿度测量点4个；温度点15和湿度点O位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/C/O 映射，O 默认 CH4，须按实际接线确认。"
+                    : "上、中、下三层布点：温度测量点9个、湿度测量点3个；温度点5和湿度点O位于中层几何中心。各点距内壁为对应边长的 1/10，受风道影响时可加大但不超过 500 mm。湿度通道建议按 A/B/O 映射，O 默认 CH3，须按实际接线确认。",
                 AlternatePointLayoutText = large
-                    ? "可按用户实际工作需要自定义温度/湿度点数、中心点和空间位置；须完整记录点数、各点位置、与内壁距离及调整原因。"
-                    : "可按用户实际工作需要自定义温度/湿度点数、中心点和空间位置；有样品架或样品车时，下层点可布置在其上方 10 mm 处，并完整记录调整原因。",
+                    ? "规范允许按用户实际工作需要调整空间位置；如同时改变规范默认点数，属于偏离，须完整记录点数、各点位置、与内壁距离及调整原因。"
+                    : "规范允许按用户实际工作需要调整空间位置；有样品架或样品车时，下层点可布置在其上方 10 mm 处。如同时改变规范默认点数，属于偏离，须完整记录调整原因。",
                 CustomPointCountLayoutText = large
                     ? "仅当实际工作空间容积大于 50 m³ 时，可按实际需要或用户需求增加测点；必须填写工作区尺寸，并完整记录点数、中心位置和调整原因。"
                     : "仅当实际工作空间容积小于 0.05 m³ 时，可按实际需要或用户需求减少测点；必须填写工作区尺寸，并完整记录点数、中心位置和调整原因。",
@@ -125,6 +131,7 @@ namespace UpperComInspectionInstrument2022.Services
             };
         }
 
+        /// <summary>创建 JJF 1376-2012 箱式电阻炉规则，并按 0.15 m³ 测温区容积分界映射 5 点或 9 点方案。</summary>
         private static CalibrationStandardRule CreateJjf1376(int volumeIndex)
         {
             bool large = volumeIndex == 1;
@@ -184,12 +191,15 @@ namespace UpperComInspectionInstrument2022.Services
             };
         }
 
+        /// <summary>检查本次设定温度是否落在所选规范的适用范围内。</summary>
         public static bool IsSetTemperatureInScope(CalibrationStandardRule rule, double value) =>
             double.IsFinite(value) && value >= rule.MinimumSetTemperature && value <= rule.MaximumSetTemperature;
 
+        /// <summary>取得规范用于划分小/大容积方案的阈值，单位为 m³。</summary>
         public static double GetVolumeThreshold(int standardIndex) =>
             standardIndex == Jjf1376Index ? 0.15 : 2;
 
+        /// <summary>检查用户填写的工作区体积是否与所选容积分类一致。</summary>
         public static bool MatchesVolumeClass(int standardIndex, int volumeIndex, double volumeM3)
         {
             if (!double.IsFinite(volumeM3) || volumeM3 <= 0 || volumeIndex is < 0 or > 1) return false;
@@ -197,12 +207,25 @@ namespace UpperComInspectionInstrument2022.Services
             return volumeIndex == 0 ? volumeM3 <= threshold : volumeM3 > threshold;
         }
 
+        /// <summary>判断 JJF 1101 设备是否属于允许按实际需要增减测点的极端容积。</summary>
         public static bool AllowsJjf1101PointCountAdjustment(double volumeM3) =>
             double.IsFinite(volumeM3) && volumeM3 > 0 && (volumeM3 < 0.05 || volumeM3 > 50);
 
+        /// <summary>判断当前布点模式是否允许操作人员直接输入测点数和中心点。</summary>
         public static bool AllowsCustomPointInput(CalibrationStandardRule rule, int layoutModeIndex) =>
             rule.SupportsCustomPointLayout && Array.IndexOf(rule.EditablePointCountModeIndexes, layoutModeIndex) >= 0;
 
+        /// <summary>
+        /// 判断当前可编辑布点是否改变了规范默认点数。软件保留现场自定义能力，
+        /// 但凡改变默认点数都必须留下偏离原因，避免“位置调整”被误当成无条件增减测点。
+        /// </summary>
+        public static bool RequiresDeviationForPointCountChange(
+            CalibrationStandardRule rule, int layoutModeIndex, int temperaturePointCount, int humidityPointCount) =>
+            AllowsCustomPointInput(rule, layoutModeIndex) &&
+            (temperaturePointCount != rule.TemperaturePointCount || humidityPointCount != rule.HumidityPointCount);
+
+
+        /// <summary>取得所选校准点方案对应的操作说明。</summary>
         public static string GetCalibrationPointRuleText(CalibrationStandardRule rule, int selectionIndex)
         {
             return selectionIndex >= 0 && selectionIndex < rule.CalibrationPointRuleTexts.Length
@@ -210,6 +233,7 @@ namespace UpperComInspectionInstrument2022.Services
                 : "请选择本次当前校准点的来源。";
         }
 
+        /// <summary>取得当前布点模式对应的规范说明或偏离记录要求。</summary>
         public static string GetPointLayoutText(CalibrationStandardRule rule, int layoutModeIndex)
         {
             if (layoutModeIndex == rule.CustomPointCountModeIndex &&

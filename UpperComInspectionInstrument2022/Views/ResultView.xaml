@@ -31,7 +31,14 @@
         </UniformGrid>
 
         <Border Grid.Row="4" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="28,12" Margin="0,18,0,0">
-            <DockPanel><TextBlock Text="Excel 原始记录从本次作业的固化 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B" VerticalAlignment="Center"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/><Button x:Name="OpenReportButton" Content="生成 Excel 原始记录" Click="OpenReportButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/></StackPanel></DockPanel>
+            <DockPanel>
+                <TextBlock Text="Excel 原始记录与 Word 证书均从本次作业的固化 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B" VerticalAlignment="Center"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/>
+                    <Button x:Name="OpenReportButton" Content="生成 Excel 原始记录" Click="OpenReportButton_Click" Padding="20,9" Margin="0,0,10,0"/>
+                    <Button x:Name="GenerateWordCertificateButton" Content="生成 Word 证书" Click="GenerateWordCertificateButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
     </Grid>
 </Page>

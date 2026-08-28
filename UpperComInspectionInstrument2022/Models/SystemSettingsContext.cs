@@ -39,6 +39,10 @@ namespace UpperComInspectionInstrument2022.Models
         public static double HumidityUncertainty { get; set; } = 1;
         public static double HumidityCoverage { get; set; } = 2;
 
+        /// <summary>
+        /// 从当前 Windows 用户的本地配置目录读取系统设置。
+        /// 文件不存在或内容损坏时保留代码中的安全默认值，让程序仍可启动并由用户重新填写。
+        /// </summary>
         public static void Load()
         {
             try
@@ -62,17 +66,20 @@ namespace UpperComInspectionInstrument2022.Models
                 MeasuringInstrumentClass = snapshot.MeasuringInstrumentClass > 0 ? snapshot.MeasuringInstrumentClass : MeasuringInstrumentClass;
                 TemperatureChannelCorrections = snapshot.TemperatureChannelCorrections ?? string.Empty;
                 HumidityChannelCorrections = snapshot.HumidityChannelCorrections ?? string.Empty;
-                TemperatureStabilityChange = snapshot.TemperatureStabilityChange;
-                HumidityStabilityChange = snapshot.HumidityStabilityChange;
-                TemperatureUncertainty = snapshot.TemperatureUncertainty;
-                TemperatureCoverage = snapshot.TemperatureCoverage;
-                HumidityUncertainty = snapshot.HumidityUncertainty;
-                HumidityCoverage = snapshot.HumidityCoverage;
+                TemperatureStabilityChange = snapshot.TemperatureStabilityChange >= 0 ? snapshot.TemperatureStabilityChange : TemperatureStabilityChange;
+                HumidityStabilityChange = snapshot.HumidityStabilityChange >= 0 ? snapshot.HumidityStabilityChange : HumidityStabilityChange;
+                TemperatureUncertainty = snapshot.TemperatureUncertainty > 0 ? snapshot.TemperatureUncertainty : TemperatureUncertainty;
+                TemperatureCoverage = snapshot.TemperatureCoverage > 0 ? snapshot.TemperatureCoverage : TemperatureCoverage;
+                HumidityUncertainty = snapshot.HumidityUncertainty > 0 ? snapshot.HumidityUncertainty : HumidityUncertainty;
+                HumidityCoverage = snapshot.HumidityCoverage > 0 ? snapshot.HumidityCoverage : HumidityCoverage;
             }
             catch (IOException) { }
             catch (JsonException) { }
         }
 
+        /// <summary>
+        /// 将当前系统设置序列化为 JSON 文件。该文件只保存长期资料，不保存单次校准样本。
+        /// </summary>
         public static void Save()
         {
             string? directory = Path.GetDirectoryName(SettingsPath);
@@ -105,6 +112,9 @@ namespace UpperComInspectionInstrument2022.Models
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
         }
 
+        /// <summary>
+        /// JSON 序列化专用的数据传输对象，使持久化结构与界面使用的静态上下文分离。
+        /// </summary>
         private sealed class SettingsSnapshot
         {
             public string? StandardName { get; set; }

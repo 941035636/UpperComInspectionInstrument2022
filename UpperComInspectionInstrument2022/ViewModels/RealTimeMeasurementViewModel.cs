@@ -1,4 +1,5 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
+using DocumentFormat.OpenXml.Office2013.WebExtension;
 using System.Collections.ObjectModel;
 using UpperComInspectionInstrument2022.Models;
 
@@ -62,7 +63,8 @@ namespace UpperComInspectionInstrument2022.ViewModels
 
 
         /// <summary>
-        /// 添加一次采集结果
+        /// 添加一次采集结果，并将其设为当前快照。
+        /// 内存只保留最近 600 组实时快照；正式校准样本由 <see cref="CalibrationRunContext"/> 单独保存。
         /// </summary>
         public void AddSnapshot(
             MeasurementSnapshot snapshot)
@@ -80,5 +82,6 @@ namespace UpperComInspectionInstrument2022.ViewModels
             StatusText =
                 $"已采集 {AcquisitionCount} 次";
         }
+
     }
 }

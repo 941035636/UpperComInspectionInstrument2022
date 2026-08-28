@@ -36,6 +36,9 @@ namespace UpperComInspectionInstrument2022.Models
         /// </summary>
         public int InvalidChannelCount { get; set; }
 
+        /// <summary>
+        /// 创建空快照，并初始化通道集合，避免调用方在添加通道前进行空值判断。
+        /// </summary>
         public MeasurementSnapshot()
         {
             Channels =

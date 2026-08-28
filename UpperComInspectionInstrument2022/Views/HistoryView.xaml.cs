@@ -7,19 +7,25 @@ using UpperComInspectionInstrument2022.Services;
 
 namespace UpperComInspectionInstrument2022.Views
 {
+    /// <summary>
+    /// 本地校准作业浏览页。数据来源是文件夹内的 CSV 摘要，不依赖数据库。
+    /// </summary>
     public partial class HistoryView : Page
     {
+        /// <summary>初始化页面并加载本地历史记录。</summary>
         public HistoryView()
         {
             InitializeComponent();
             RefreshHistory();
         }
 
+        /// <summary>按当前关键字和下拉筛选条件重新加载历史记录。</summary>
         private void SearchButton_Click(object sender, RoutedEventArgs e)
         {
             RefreshHistory();
         }
 
+        /// <summary>刷新表格数据源，并在有/无记录状态之间切换页面显示。</summary>
         private void RefreshHistory()
         {
             string standard = GetFilterValue(StandardFilterComboBox, "全部规范");
@@ -34,24 +40,30 @@ namespace UpperComInspectionInstrument2022.Views
             EmptyStatePanel.Visibility = hasRecords ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        /// <summary>读取筛选下拉框；“全部”选项转换为空字符串表示不筛选。</summary>
         private static string GetFilterValue(ComboBox comboBox, string allValue)
         {
             string value = (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? string.Empty;
             return value == allValue ? string.Empty : value;
         }
 
+        /// <summary>创建并打开本地校准数据根目录。</summary>
         private void OpenDataRootButton_Click(object sender, RoutedEventArgs e)
         {
             Directory.CreateDirectory(CalibrationFileStorageService.Default.DataRootPath);
             OpenPath(CalibrationFileStorageService.Default.DataRootPath);
         }
 
+        /// <summary>打开所选作业文件夹。</summary>
         private void OpenSelectedJobButton_Click(object sender, RoutedEventArgs e) => OpenSelectedPath(openSample: false);
 
+        /// <summary>用系统默认办公软件打开所选作业的正式采样 CSV。</summary>
         private void OpenSelectedSampleButton_Click(object sender, RoutedEventArgs e) => OpenSelectedPath(openSample: true);
 
+        /// <summary>打开所选作业的结果 CSV。</summary>
         private void OpenSelectedResultButton_Click(object sender, RoutedEventArgs e) => OpenSelectedResult();
 
+        /// <summary>为所选已完成作业生成或更新 Excel 原始记录。</summary>
         private void GenerateExcelReportButton_Click(object sender, RoutedEventArgs e)
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
@@ -63,6 +75,7 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(reportPath);
         }
 
+        /// <summary>打开所选作业已经生成的 Excel 原始记录。</summary>
         private void OpenExcelReportButton_Click(object sender, RoutedEventArgs e)
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
@@ -74,8 +87,22 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(selected.ExcelReportFilePath);
         }
 
+        /// <summary>为所选已完成作业生成或更新 Word 校准证书，并用默认办公软件打开。</summary>
+        private void GenerateWordCertificateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (!CalibrationWordCertificateService.Default.TryGenerate(selected.DirectoryPath, out string certificatePath, out string error))
+            {
+                MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            OpenPath(certificatePath);
+        }
+
+        /// <summary>双击历史行时打开对应作业文件夹。</summary>
         private void HistoryDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedPath(openSample: false);
 
+        /// <summary>检查结果文件是否存在，然后调用系统默认程序打开。</summary>
         private void OpenSelectedResult()
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
@@ -87,6 +114,7 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(selected.ResultFilePath);
         }
 
+        /// <summary>取得当前选中的历史作业；未选择时向用户给出提示。</summary>
         private bool TryGetSelectedArchive(out CalibrationArchiveSummary selected)
         {
             if (HistoryDataGrid.SelectedItem is CalibrationArchiveSummary archive)
@@ -99,6 +127,7 @@ namespace UpperComInspectionInstrument2022.Views
             return false;
         }
 
+        /// <summary>按参数打开所选作业目录或正式采样文件，并处理文件被移动的情况。</summary>
         private void OpenSelectedPath(bool openSample)
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
@@ -113,6 +142,7 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(path);
         }
 
+        /// <summary>通过 Windows Shell 用默认资源管理器或办公软件打开路径。</summary>
         private static void OpenPath(string path)
         {
             try
@@ -125,6 +155,7 @@ namespace UpperComInspectionInstrument2022.Views
             }
         }
 
+        /// <summary>从空历史状态返回校准作业入口。</summary>
         private void OpenCalibrationJobButton_Click(object sender, RoutedEventArgs e)
         {
             if (Application.Current.MainWindow is MainWindow mainWindow)

@@ -69,9 +69,14 @@
                 </Border>
 
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
-                    <StackPanel>
-                        <TextBlock Text="2 被校设备与委托信息" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
-                        <TextBlock Text="本区内容均为可选档案信息，可先进入实时测量，出具报告前再按需要补充。" Margin="0,6,0,0" Foreground="#64748B"/>
+                    <Expander x:Name="OptionalArchiveExpander" IsExpanded="False">
+                        <Expander.Header>
+                            <StackPanel>
+                                <TextBlock Text="2 被校设备与委托信息（可选）" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
+                                <TextBlock Text="不影响连接、实时观察和正式采样；需要归档或出具报告时再展开补充。" Margin="0,6,0,0" Foreground="#64748B"/>
+                            </StackPanel>
+                        </Expander.Header>
+                        <StackPanel Margin="0,14,0,0">
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <TextBlock Text="委托单位（可选）" Style="{StaticResource FieldLabel}"/><TextBox x:Name="CustomerNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
@@ -96,11 +101,12 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <TextBlock Text="委托单位地址（可选）" Style="{StaticResource FieldLabel}"/><TextBox x:Name="CustomerAddressTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
-                                    <TextBlock Grid.Column="2" Text="校准员 / 核验员（可选）" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><Grid Grid.Column="3" Margin="8,0,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="CalibratorTextBox" Padding="8,6" Margin="0,0,4,0"/><TextBox x:Name="VerifierTextBox" Grid.Column="1" Padding="8,6" Margin="4,0,0,0"/></Grid>
+                                    <TextBlock Grid.Column="2" Text="校准员/核验员（可选）" Style="{StaticResource FieldLabel}" Margin="10,0,0,0"/><Grid Grid.Column="3" Margin="8,0,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="CalibratorTextBox" Padding="8,6" Margin="0,0,4,0"/><TextBox x:Name="VerifierTextBox" Grid.Column="1" Padding="8,6" Margin="4,0,0,0"/></Grid>
                                 </Grid>
                             </StackPanel>
                         </Expander>
-                    </StackPanel>
+                        </StackPanel>
+                    </Expander>
                 </Border>
 
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
@@ -124,10 +130,20 @@
                             <TextBlock Grid.Column="4" Text="高" Style="{StaticResource FieldLabel}" Margin="20,0,0,0"/><TextBox x:Name="WorkZoneHeightTextBox" Grid.Column="5" Style="{StaticResource FieldBox}"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="温度空间测点数 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperaturePointCountTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
-                            <TextBlock Grid.Column="2" x:Name="HumidityPointCountLabel" Text="湿度空间测点数 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityPointCountTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
-                            <TextBlock Grid.Column="4" Text="温度中心点 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="TemperatureCenterPointTextBox" Grid.Column="5" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按规范默认空间布点自动生成；选择自定义布点后可修改。"/>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="130"/>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="130"/>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="130"/>
+                                <ColumnDefinition Width="120"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="温度空间测点数 *" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="TemperaturePointCountTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
+                            <TextBlock Grid.Column="2" x:Name="HumidityPointCountLabel" Text="湿度空间测点数 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/>
+                            <TextBox x:Name="HumidityPointCountTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
+                            <TextBlock Grid.Column="4" Text="温度中心点 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/>
+                            <TextBox x:Name="TemperatureCenterPointTextBox" Grid.Column="5" Style="{StaticResource FieldBox}" TextChanged="LinkageInput_TextChanged" ToolTip="按规范默认空间布点自动生成；选择自定义布点后可修改。"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -151,8 +167,8 @@
                         </Border>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="160"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="被校温度分辨力 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DutTemperatureResolutionTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="填写被校设备温度显示的最小变化量，参与分辨力不确定度计算。"/>
-                            <TextBlock Grid.Column="2" x:Name="DutHumidityResolutionLabel" Text="被校湿度分辨力 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="DutHumidityResolutionTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="填写被校设备湿度显示的最小变化量，不能默认写成 0 或 1。"/>
+                            <TextBlock Text="被校温度分辨力 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DutTemperatureResolutionTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="填写被校设备温度显示的最小变化量，用于设备档案和报告。附录不确定度计算使用标准器分辨力，二者不要混淆。"/>
+                            <TextBlock Grid.Column="2" x:Name="DutHumidityResolutionLabel" Text="被校湿度分辨力 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="DutHumidityResolutionTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="填写被校设备湿度显示的最小变化量，用于设备档案和报告；不能默认写成 0 或 1。"/>
                         </Grid>
                     </StackPanel>
                 </Border>

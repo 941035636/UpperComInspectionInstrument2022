@@ -9,10 +9,16 @@ using UpperComInspectionInstrument2022.Services;
 
 namespace UpperComInspectionInstrument2022.Views
 {
+    /// <summary>
+    /// 校准任务配置页。
+    /// 它把“规范—容积—校准点方案—空间布点—采样计划”联动成一份可执行任务，
+    /// 并在进入工作台前完成范围、环境、标准器和偏离说明校验。
+    /// </summary>
     public partial class SchemeView : Page
     {
         private bool _loading;
 
+        /// <summary>初始化下拉选项，恢复上次任务，并应用当前规范规则。</summary>
         public SchemeView()
         {
             InitializeComponent();
@@ -45,6 +51,7 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateReferencedSettings();
         }
 
+        /// <summary>把 <see cref="CalibrationTaskContext"/> 中已保存的任务值回填到页面控件。</summary>
         private void LoadTaskValues()
         {
             CustomerNameTextBox.Text = CalibrationTaskContext.CustomerName;
@@ -82,6 +89,7 @@ namespace UpperComInspectionInstrument2022.Views
             TaskStatusTextBlock.Text = CalibrationTaskContext.IsConfigured ? "已加载已保存任务，修改后请重新保存" : "任务尚未保存";
         }
 
+        /// <summary>切换规范时重建容积、校准类型、稳定依据和布点方案选项。</summary>
         private void StandardComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_loading || StandardComboBox.SelectedIndex < 0) return;
@@ -91,6 +99,7 @@ namespace UpperComInspectionInstrument2022.Views
             ApplyRule(true);
         }
 
+        /// <summary>按 JJF 1101 或 JJF 1376 配置所有规范相关下拉选项。</summary>
         private void ConfigureStandardChoices(int standardIndex, bool resetSelection)
         {
             int oldVolume = resetSelection
@@ -135,41 +144,52 @@ namespace UpperComInspectionInstrument2022.Views
             }
         }
 
+        /// <summary>容积档位变化后重新生成默认测点数、中心点和布点说明。</summary>
         private void VolumeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (!_loading && VolumeComboBox.SelectedIndex >= 0) ApplyRule(true);
         }
 
+        /// <summary>温度/温湿度类型变化后更新湿度参数可见性和规范默认值。</summary>
         private void CalibrationTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (!_loading && CalibrationTypeComboBox.SelectedIndex >= 0) ApplyRule(true);
         }
 
+        /// <summary>布点模式变化后更新是否允许自定义点数及对应说明。</summary>
         private void PointLayoutModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (!_loading) ApplyRule(true);
         }
 
+        /// <summary>校准点来源变化后只更新方案说明，不覆盖用户已经填写的执行参数。</summary>
         private void PointSelectionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (!_loading) ApplyRule(false);
         }
 
+        /// <summary>关键输入变化时同步刷新页面底部的任务联动摘要。</summary>
         private void LinkageInput_TextChanged(object sender, TextChangedEventArgs e)
         {
             if (!_loading && TaskLinkageSummaryTextBlock != null) UpdateTaskLinkageSummary();
         }
 
+        /// <summary>只有负载校准时才允许填写负载说明。</summary>
         private void LoadConditionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (LoadDescriptionTextBox != null) LoadDescriptionTextBox.IsEnabled = LoadConditionComboBox.SelectedIndex == 1;
         }
 
+        /// <summary>稳定依据变化时切换等待时间输入框。</summary>
         private void StabilityBasisComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (!_loading) UpdateStabilityControls();
         }
 
+        /// <summary>
+        /// 应用规范联动规则。<paramref name="applyDefaults"/> 为 true 时重新写入规范默认执行参数，
+        /// 为 false 时只刷新说明和控件状态，避免覆盖用户输入。
+        /// </summary>
         private void ApplyRule(bool applyDefaults)
         {
             if (StandardComboBox.SelectedIndex < 0 || CalibrationTypeComboBox.SelectedIndex < 0) return;
@@ -219,6 +239,7 @@ namespace UpperComInspectionInstrument2022.Views
                 SamplingIntervalTextBox.IsReadOnly = !isJjf1101;
                 UpdateStabilityControls();
                 UpdateTaskLinkageSummary();
+                UpdateReferencedSettings();
                 return;
             }
 
@@ -255,8 +276,10 @@ namespace UpperComInspectionInstrument2022.Views
             LoadDescriptionTextBox.IsEnabled = LoadConditionComboBox.SelectedIndex == 1;
             UpdateStabilityControls();
             UpdateTaskLinkageSummary();
+            UpdateReferencedSettings();
         }
 
+        /// <summary>按当前箱式炉布点模式打开规范图 1 或图 2。</summary>
         private void ViewLayoutFigureButton_Click(object sender, RoutedEventArgs e)
         {
             int preferredFigure = PointLayoutModeComboBox.SelectedIndex == 1 ? 2 : 1;
@@ -267,6 +290,7 @@ namespace UpperComInspectionInstrument2022.Views
             window.ShowDialog();
         }
 
+        /// <summary>根据任务是否含湿度及规范类型控制条件字段的显示。</summary>
         private void ApplyStandardVisibility(bool includesHumidity, bool isJjf1101)
         {
             Visibility humidityVisibility = includesHumidity ? Visibility.Visible : Visibility.Collapsed;
@@ -284,6 +308,9 @@ namespace UpperComInspectionInstrument2022.Views
             AppearanceCheckComboBox.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        /// <summary>
+        /// 生成面向操作人员的联动摘要，明确保存后工作台将使用的工况、点数和中心点。
+        /// </summary>
         private void UpdateTaskLinkageSummary()
         {
             if (TaskLinkageSummaryTextBlock == null || StandardComboBox.SelectedIndex < 0 ||
@@ -322,6 +349,7 @@ namespace UpperComInspectionInstrument2022.Views
                 "保存任务后，校准工作台将按上述空间测点数生成实时数据矩阵。";
         }
 
+        /// <summary>从普通字符串项或 ComboBoxItem 中读取显示文本。</summary>
         private static string GetSelectedText(ComboBox comboBox, string fallback)
         {
             return comboBox.SelectedItem switch
@@ -332,6 +360,7 @@ namespace UpperComInspectionInstrument2022.Views
             };
         }
 
+        /// <summary>只在 JJF 1101 选择规范计时等待时显示等待分钟数。</summary>
         private void UpdateStabilityControls()
         {
             bool timedWait = StandardComboBox.SelectedIndex == 0 && StabilityBasisComboBox.SelectedIndex == 1;
@@ -339,20 +368,31 @@ namespace UpperComInspectionInstrument2022.Views
             StableWaitTextBox.Visibility = timedWait ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        /// <summary>在任务页显示即将固化到任务中的标准器身份和主要能力。</summary>
         private void UpdateReferencedSettings()
         {
             string standardName = string.IsNullOrWhiteSpace(SystemSettingsContext.StandardName) ? "未配置标准器名称" : SystemSettingsContext.StandardName;
             string certificate = string.IsNullOrWhiteSpace(SystemSettingsContext.CertificateNumber) ? "证书编号未填写" : $"证书 {SystemSettingsContext.CertificateNumber}";
             string validity = SystemSettingsContext.ValidityDate?.ToString("yyyy-MM-dd") ?? "有效期未填写";
             StandardReferenceTextBlock.Text = $"{standardName} · {certificate} · {validity}";
-            StandardCapabilityTextBlock.Text = $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}；湿度 {SystemSettingsContext.HumidityRange} / {SystemSettingsContext.HumidityResolution:0.###} %RH / U={SystemSettingsContext.HumidityUncertainty:0.###}, k={SystemSettingsContext.HumidityCoverage:0.###}";
+            bool isFurnace = StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index;
+            bool includesHumidity = !isFurnace && CalibrationTypeComboBox.SelectedIndex == 1;
+            StandardCapabilityTextBlock.Text = isFurnace
+                ? $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / {SystemSettingsContext.MeasuringInstrumentClass:0.###} 级；热电偶 {SystemSettingsContext.ThermocoupleGrade}；U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}"
+                : includesHumidity
+                    ? $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}；湿度 {SystemSettingsContext.HumidityRange} / {SystemSettingsContext.HumidityResolution:0.###} %RH / U={SystemSettingsContext.HumidityUncertainty:0.###}, k={SystemSettingsContext.HumidityCoverage:0.###}"
+                    : $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}";
         }
 
+        /// <summary>跳转到系统设置维护标准器和证书资料。</summary>
         private void OpenSystemSettingsButton_Click(object sender, RoutedEventArgs e)
         {
             if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowSettingsPage();
         }
 
+        /// <summary>
+        /// 按从基础选择到现场条件的顺序校验任务；全部通过后固化标准器快照、保存任务并进入工作台。
+        /// </summary>
         private void StartCalibrationButton_Click(object sender, RoutedEventArgs e)
         {
             if (StandardComboBox.SelectedIndex < 0 || CalibrationTypeComboBox.SelectedIndex < 0 || PointSelectionComboBox.SelectedIndex < 0)
@@ -465,6 +505,13 @@ namespace UpperComInspectionInstrument2022.Views
                 ShowInputError("调整布点必须说明测点位置及原因。", PointLayoutDescriptionTextBox);
                 return;
             }
+            bool changedNormativePointCount = CalibrationStandardRuleService.RequiresDeviationForPointCountChange(
+                rule, PointLayoutModeComboBox.SelectedIndex, temperatureCount, humidityCount);
+            if (changedNormativePointCount && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))
+            {
+                ShowInputError("自定义测点数改变了规范默认方案，必须在偏离/自定义说明中记录原因、依据和实际点数。", DeviationDescriptionTextBox);
+                return;
+            }
             bool extremePointCountMode = rule.RequiresExtremeVolumeForCustomPointCount &&
                                          rule.CustomPointCountModeIndex >= 0 &&
                                          PointLayoutModeComboBox.SelectedIndex == rule.CustomPointCountModeIndex;
@@ -513,7 +560,8 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show("请先确认现场不存在规范禁止的环境干扰。", "现场条件未确认", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (!CalibrationTaskContext.TrySnapshotCurrentStandardSettings(out string standardSettingsError))
+            if (!CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
+                    StandardComboBox.SelectedIndex, includesHumidity, out string standardSettingsError))
             {
                 MessageBox.Show($"{standardSettingsError}\n\n请先维护标准器资料，再保存校准任务。", "标准器资料不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
@@ -527,6 +575,7 @@ namespace UpperComInspectionInstrument2022.Views
             if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowRealTimeMeasurementPage();
         }
 
+        /// <summary>把已经通过校验的页面值写入任务上下文并持久化，不在本方法重复做输入判断。</summary>
         private void SaveTask(CalibrationStandardRule rule, bool includesHumidity, double setTemperature, double? setHumidity,
             int temperatureCount, int humidityCount, int temperatureCenter, int humidityCenter, int plannedCount,
             int samplingInterval, int stableWait, double dutTemperatureResolution, double dutHumidityResolution,
@@ -580,17 +629,24 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.Save();
         }
 
+        /// <summary>显示统一输入警告，并把焦点移到需要修正的控件。</summary>
         private static void ShowInputError(string message, Control control)
         {
             MessageBox.Show(message, "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
             control.Focus();
         }
 
+        /// <summary>把可空数显示为简洁文本，空值保持空白。</summary>
         private static string FormatOptional(double? value) => value?.ToString("0.###") ?? string.Empty;
+        /// <summary>只显示正数；未填写的 0 显示为空白。</summary>
         private static string FormatPositive(double value) => value > 0 ? value.ToString("0.###") : string.Empty;
+        /// <summary>读取可选正数，空白或非法输入返回空值。</summary>
         private static double? ParseOptionalPositiveDouble(string text) =>
             double.TryParse(text.Trim(), out double value) && double.IsFinite(value) && value > 0 ? value : null;
 
+        /// <summary>
+        /// 用长度×宽度×高度计算工作区体积并从 mm³ 换算为 m³；尺寸不完整时返回空值。
+        /// </summary>
         private double? TryGetWorkZoneVolume(out bool hasAnyDimension)
         {
             hasAnyDimension = !string.IsNullOrWhiteSpace(WorkZoneLengthTextBox.Text) ||
@@ -603,11 +659,16 @@ namespace UpperComInspectionInstrument2022.Views
             return length.Value * width.Value * height.Value / 1_000_000_000d;
         }
 
+        /// <summary>读取位于闭区间内的整数。</summary>
         private static bool TryParseInt(string text, int min, int max, out int value) =>
             int.TryParse(text.Trim(), out value) && value >= min && value <= max;
+        /// <summary>读取位于闭区间内的有限浮点数。</summary>
         private static bool TryParseDouble(string text, double min, double max, out double value) =>
             double.TryParse(text.Trim(), out value) && double.IsFinite(value) && value >= min && value <= max;
 
+        /// <summary>
+        /// 当用户选择“范围下限/上限/中间点”方案时，检查当前工况是否与填写的使用范围相匹配。
+        /// </summary>
         private bool ValidateRangeBasedCalibrationPoint(double setTemperature, double? setHumidity, bool includesHumidity)
         {
             List<double> bounds = ExtractRangeNumbers(MeasurementRangeTextBox.Text);
@@ -641,6 +702,7 @@ namespace UpperComInspectionInstrument2022.Views
             return true;
         }
 
+        /// <summary>从“下限～上限；下限～上限”一类自由文本中按出现顺序提取有限数。</summary>
         private static List<double> ExtractRangeNumbers(string text)
         {
             List<double> values = new List<double>();
@@ -651,6 +713,7 @@ namespace UpperComInspectionInstrument2022.Views
             return values;
         }
 
+        /// <summary>判断设定值是否等于范围下限、上限，或在允许时等于中间点。</summary>
         private static bool MatchesRangePoint(double value, double first, double second, bool allowMiddle)
         {
             double lower = Math.Min(first, second);

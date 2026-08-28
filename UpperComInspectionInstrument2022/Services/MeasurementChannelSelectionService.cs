@@ -7,6 +7,9 @@ namespace UpperComInspectionInstrument2022.Services
     /// <summary>统一定义哪些物理通道属于本次校准任务，避免 UI、修正和结果计算各自筛选。</summary>
     public static class MeasurementChannelSelectionService
     {
+        /// <summary>
+        /// 判断一个物理通道是否属于指定量的校准通道，排除湿度探头的伴随温度。
+        /// </summary>
         public static bool IsCalibrationChannel(InspectionChannelData channel, ChannelType type)
         {
             return type == ChannelType.Temperature
@@ -14,6 +17,9 @@ namespace UpperComInspectionInstrument2022.Services
                 : channel.Role == ChannelRole.Humidity;
         }
 
+        /// <summary>
+        /// 同时选择本任务需要的温度和湿度测点，用于矩阵展示和本地文件归档。
+        /// </summary>
         public static List<InspectionChannelData> SelectRequired(
             IEnumerable<InspectionChannelData> channels,
             int temperaturePointCount,
@@ -28,6 +34,9 @@ namespace UpperComInspectionInstrument2022.Services
                 .ToList();
         }
 
+        /// <summary>
+        /// 选择某一种量的前 <paramref name="pointCount"/> 个校准通道，并可选择只保留有效值。
+        /// </summary>
         public static List<InspectionChannelData> SelectRequired(
             IEnumerable<InspectionChannelData> channels,
             ChannelType type,

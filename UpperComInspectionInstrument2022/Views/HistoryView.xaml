@@ -34,7 +34,8 @@
                         <Button Content="打开采样 CSV" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedSampleButton_Click"/>
                         <Button Content="打开结果 CSV" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedResultButton_Click"/>
                         <Button Content="生成/更新 Excel" Padding="14,7" Margin="0,0,8,0" Background="#2563EB" Foreground="White" BorderThickness="0" Click="GenerateExcelReportButton_Click"/>
-                        <Button Content="打开 Excel" Padding="14,7" Click="OpenExcelReportButton_Click"/>
+                        <Button Content="打开 Excel" Padding="14,7" Margin="0,0,8,0" Click="OpenExcelReportButton_Click"/>
+                        <Button Content="生成/更新 Word" Padding="14,7" Background="#2563EB" Foreground="White" BorderThickness="0" Click="GenerateWordCertificateButton_Click"/>
                     </StackPanel>
                 </DockPanel>
                 <DataGrid Grid.Row="1" x:Name="HistoryDataGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Visibility="Collapsed" SelectionMode="Single" MouseDoubleClick="HistoryDataGrid_MouseDoubleClick">

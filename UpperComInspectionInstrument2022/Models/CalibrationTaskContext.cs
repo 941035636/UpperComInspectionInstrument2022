@@ -86,11 +86,20 @@ namespace UpperComInspectionInstrument2022.Models
         public static double ReferencedTemperatureCoverage { get; set; }
         public static double ReferencedHumidityUncertainty { get; set; }
         public static double ReferencedHumidityCoverage { get; set; }
+        /// <summary>JJF 1376 任务建立时固化的测温仪器准确度级别。</summary>
+        public static double ReferencedMeasuringInstrumentClass { get; set; }
+        /// <summary>JJF 1376 任务建立时固化的热电偶等级要求或实际等级。</summary>
+        public static string ReferencedThermocoupleGrade { get; set; } = string.Empty;
         public static bool IsConfigured { get; set; }
         public static bool HasCompletedCalibration { get; set; }
 
+        /// <summary>当前任务是否同时包含湿度参数；箱式电阻炉任务始终只包含温度。</summary>
         public static bool IncludesHumidity => StandardIndex == 0 && CalibrationTypeIndex == 1;
 
+        /// <summary>
+        /// 从本地 JSON 恢复上次任务配置，并对旧版本缺失字段应用兼容默认值。
+        /// 正式校准完成状态不会跨程序启动保留。
+        /// </summary>
         public static void Load()
         {
             try
@@ -158,6 +167,7 @@ namespace UpperComInspectionInstrument2022.Models
             catch (JsonException) { }
         }
 
+        /// <summary>将当前任务配置及标准器快照保存到当前 Windows 用户的本地 JSON 文件。</summary>
         public static void Save()
         {
             string? directory = Path.GetDirectoryName(TaskPath);
@@ -169,7 +179,14 @@ namespace UpperComInspectionInstrument2022.Models
         /// 校验当前系统设置中的标准器身份与证书有效性，并将完整资料固化到当前任务。
         /// 已建立任务只有显式调用本方法才会更新快照，避免系统设置变化静默影响历史任务。
         /// </summary>
-        public static bool TrySnapshotCurrentStandardSettings(out string error)
+        public static bool TrySnapshotCurrentStandardSettings(out string error) =>
+            TrySnapshotCurrentStandardSettings(StandardIndex, IncludesHumidity, out error);
+
+        /// <summary>
+        /// 按即将建立的任务规范校验系统标准器资料并固化快照。
+        /// 任务页在写入 <see cref="StandardIndex"/> 前调用，因此规范与湿度标志必须显式传入。
+        /// </summary>
+        public static bool TrySnapshotCurrentStandardSettings(int standardIndex, bool includesHumidity, out string error)
         {
             if (string.IsNullOrWhiteSpace(SystemSettingsContext.StandardName))
             {
@@ -191,6 +208,20 @@ namespace UpperComInspectionInstrument2022.Models
                 error = $"系统设置中的标准器证书已于 {SystemSettingsContext.ValidityDate:yyyy-MM-dd} 到期。";
                 return false;
             }
+            if (!TryValidateStandardCapability(
+                    standardIndex, includesHumidity,
+                    SystemSettingsContext.TemperatureResolution,
+                    SystemSettingsContext.TemperatureUncertainty,
+                    SystemSettingsContext.TemperatureCoverage,
+                    SystemSettingsContext.TemperatureStabilityChange,
+                    SystemSettingsContext.HumidityResolution,
+                    SystemSettingsContext.HumidityUncertainty,
+                    SystemSettingsContext.HumidityCoverage,
+                    SystemSettingsContext.HumidityStabilityChange,
+                    SystemSettingsContext.MeasuringInstrumentClass,
+                    SystemSettingsContext.ThermocoupleGrade,
+                    out error))
+                return false;
 
             ReferencedStandardName = SystemSettingsContext.StandardName.Trim();
             ReferencedCertificateNumber = SystemSettingsContext.CertificateNumber.Trim();
@@ -211,10 +242,90 @@ namespace UpperComInspectionInstrument2022.Models
             ReferencedTemperatureCoverage = SystemSettingsContext.TemperatureCoverage;
             ReferencedHumidityUncertainty = SystemSettingsContext.HumidityUncertainty;
             ReferencedHumidityCoverage = SystemSettingsContext.HumidityCoverage;
+            ReferencedMeasuringInstrumentClass = SystemSettingsContext.MeasuringInstrumentClass;
+            ReferencedThermocoupleGrade = SystemSettingsContext.ThermocoupleGrade;
             error = string.Empty;
             return true;
         }
 
+        /// <summary>
+        /// 校验任务已经固化的标准器快照。实时工作台使用本方法阻止过期、缺项或能力不符合规范的资料进入正式采样。
+        /// </summary>
+        public static bool TryValidateReferencedStandardSettings(out string error)
+        {
+            if (string.IsNullOrWhiteSpace(ReferencedStandardName) ||
+                string.IsNullOrWhiteSpace(ReferencedCertificateNumber) ||
+                !ReferencedValidityDate.HasValue)
+            {
+                error = "标准器名称、证书编号或有效期不完整，请同步或维护标准器资料。";
+                return false;
+            }
+            if (ReferencedValidityDate.Value.Date < DateTime.Today)
+            {
+                error = $"标准器证书已于 {ReferencedValidityDate:yyyy-MM-dd} 到期。";
+                return false;
+            }
+            return TryValidateStandardCapability(
+                StandardIndex, IncludesHumidity,
+                ReferencedTemperatureResolution,
+                ReferencedTemperatureUncertainty,
+                ReferencedTemperatureCoverage,
+                ReferencedTemperatureStabilityChange,
+                ReferencedHumidityResolution,
+                ReferencedHumidityUncertainty,
+                ReferencedHumidityCoverage,
+                ReferencedHumidityStabilityChange,
+                ReferencedMeasuringInstrumentClass,
+                ReferencedThermocoupleGrade,
+                out error);
+        }
+
+        /// <summary>校验会直接参与规范执行或不确定度计算的标准器能力字段。</summary>
+        private static bool TryValidateStandardCapability(
+            int standardIndex, bool includesHumidity,
+            double temperatureResolution, double temperatureUncertainty, double temperatureCoverage, double temperatureStabilityChange,
+            double humidityResolution, double humidityUncertainty, double humidityCoverage, double humidityStabilityChange,
+            double measuringInstrumentClass, string thermocoupleGrade, out string error)
+        {
+            if (!double.IsFinite(temperatureResolution) || temperatureResolution <= 0 ||
+                !double.IsFinite(temperatureUncertainty) || temperatureUncertainty <= 0 ||
+                !double.IsFinite(temperatureCoverage) || temperatureCoverage <= 0 ||
+                !double.IsFinite(temperatureStabilityChange) || temperatureStabilityChange < 0)
+            {
+                error = "标准器温度分辨力、证书不确定度 U、包含因子 k 或修正值最大变化未正确填写。";
+                return false;
+            }
+            if (standardIndex == 0 && temperatureResolution > 0.01)
+            {
+                error = "JJF 1101 要求温度标准器分辨力不低于 0.01 ℃（数值应不大于 0.01 ℃）。";
+                return false;
+            }
+            if (standardIndex == 0 && includesHumidity &&
+                (!double.IsFinite(humidityResolution) || humidityResolution <= 0 || humidityResolution > 0.1 ||
+                 !double.IsFinite(humidityUncertainty) || humidityUncertainty <= 0 ||
+                 !double.IsFinite(humidityCoverage) || humidityCoverage <= 0 ||
+                 !double.IsFinite(humidityStabilityChange) || humidityStabilityChange < 0))
+            {
+                error = "JJF 1101 温湿度任务要求湿度标准器分辨力不低于 0.1 %RH（数值应不大于 0.1），并完整填写证书 U、k 和修正值最大变化。";
+                return false;
+            }
+            if (standardIndex == 1 &&
+                (!double.IsFinite(measuringInstrumentClass) || measuringInstrumentClass <= 0 || measuringInstrumentClass > 0.02))
+            {
+                error = "JJF 1376 要求测温仪器不低于 0.02 级（级别数值应不大于 0.02）。";
+                return false;
+            }
+            if (standardIndex == 1 && string.IsNullOrWhiteSpace(thermocoupleGrade))
+            {
+                error = "JJF 1376 任务必须填写热电偶等级。";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>把当前静态任务上下文复制成可序列化对象。</summary>
         private static TaskSnapshot CreateSnapshot() => new()
         {
             StandardIndex = StandardIndex,
@@ -281,9 +392,12 @@ namespace UpperComInspectionInstrument2022.Models
             ReferencedTemperatureCoverage = ReferencedTemperatureCoverage,
             ReferencedHumidityUncertainty = ReferencedHumidityUncertainty,
             ReferencedHumidityCoverage = ReferencedHumidityCoverage,
+            ReferencedMeasuringInstrumentClass = ReferencedMeasuringInstrumentClass,
+            ReferencedThermocoupleGrade = ReferencedThermocoupleGrade,
             IsConfigured = IsConfigured
         };
 
+        /// <summary>从已保存任务恢复建任务时固化的标准器资料。</summary>
         private static void CopyReferencedSettings(TaskSnapshot snapshot)
         {
             ReferencedStandardName = snapshot.ReferencedStandardName ?? string.Empty;
@@ -305,8 +419,13 @@ namespace UpperComInspectionInstrument2022.Models
             ReferencedTemperatureCoverage = snapshot.ReferencedTemperatureCoverage;
             ReferencedHumidityUncertainty = snapshot.ReferencedHumidityUncertainty;
             ReferencedHumidityCoverage = snapshot.ReferencedHumidityCoverage;
+            ReferencedMeasuringInstrumentClass = snapshot.ReferencedMeasuringInstrumentClass;
+            ReferencedThermocoupleGrade = snapshot.ReferencedThermocoupleGrade ?? string.Empty;
         }
 
+        /// <summary>
+        /// 任务 JSON 的持久化结构。字段保持简单类型，便于版本兼容和人工排查。
+        /// </summary>
         private sealed class TaskSnapshot
         {
             public int StandardIndex { get; set; }
@@ -374,6 +493,8 @@ namespace UpperComInspectionInstrument2022.Models
             public double ReferencedTemperatureCoverage { get; set; }
             public double ReferencedHumidityUncertainty { get; set; }
             public double ReferencedHumidityCoverage { get; set; }
+            public double ReferencedMeasuringInstrumentClass { get; set; }
+            public string? ReferencedThermocoupleGrade { get; set; }
             public bool IsConfigured { get; set; }
         }
     }
