@@ -340,6 +340,16 @@ using (ZipArchive wordArchive = ZipFile.OpenRead(generatedWordPath))
            documentXml.Contains("TEST-001") && documentXml.Contains("待审核签发"),
         "Word certificate contains archived task identity, result section and review status");
 }
+Assert(CalibrationPdfArchiveService.Default.TryGenerate(storageJobDirectory, out string generatedPdfPath, out string generatedPdfError),
+    "PDF archive generation: " + generatedPdfError);
+Assert(File.Exists(generatedPdfPath) && new FileInfo(generatedPdfPath).Length > 5000,
+    "PDF archive file exists and contains nontrivial content");
+Assert(File.ReadAllBytes(generatedPdfPath).Take(5).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("%PDF-")),
+    "PDF archive has a valid PDF file signature");
+Assert(storageHistory[0].ExcelReportStatus == "已生成" &&
+       storageHistory[0].WordCertificateStatus == "已生成" &&
+       storageHistory[0].PdfArchiveStatus == "已生成",
+    "history report status reflects the generated files on disk");
 
 string legacyJobDirectory = Path.Combine(storageTestRoot, "legacy-format-1.0");
 Directory.CreateDirectory(legacyJobDirectory);
@@ -349,6 +359,9 @@ File.Delete(Path.Combine(legacyJobDirectory, "不确定度分量.csv"));
 Assert(!CalibrationExcelReportService.Default.TryGenerate(legacyJobDirectory, out _, out string incomplete11Error) &&
        incomplete11Error.Contains("必须包含文件"),
     "format 1.1 archive rejects a missing uncertainty component file");
+Assert(!CalibrationPdfArchiveService.Default.TryGenerate(legacyJobDirectory, out _, out string incomplete11PdfError) &&
+       incomplete11PdfError.Contains("必须包含文件"),
+    "format 1.1 archive rejects PDF generation when uncertainty components are missing");
 string legacySummaryPath = Path.Combine(legacyJobDirectory, "作业摘要.csv");
 string legacySummary = File.ReadAllText(legacySummaryPath).Replace("\"1.1\"", "\"1.0\"", StringComparison.Ordinal);
 File.WriteAllText(legacySummaryPath, legacySummary, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
@@ -362,6 +375,9 @@ using (ZipArchive legacyExcelArchive = ZipFile.OpenRead(legacyExcelPath))
 Assert(CalibrationWordCertificateService.Default.TryGenerate(legacyJobDirectory, out string legacyWordPath, out string legacyWordError),
     "legacy Word compatibility: " + legacyWordError);
 Assert(File.Exists(legacyWordPath), "legacy archive receives a Word certificate with an uncertainty traceability limitation");
+Assert(CalibrationPdfArchiveService.Default.TryGenerate(legacyJobDirectory, out string legacyPdfPath, out string legacyPdfError),
+    "legacy PDF compatibility: " + legacyPdfError);
+Assert(File.Exists(legacyPdfPath), "legacy archive receives a PDF report with an uncertainty traceability limitation");
 
 CalibrationTaskContext.TemperaturePointCount = 3;
 CalibrationTaskContext.PlannedCount = 2;
@@ -430,4 +446,4 @@ Assert(!File.Exists(Path.Combine(realtimeSessionDirectory, "正式采样.csv")) 
        !string.Equals(realtimeSessionDirectory, storageJobDirectory, StringComparison.OrdinalIgnoreCase),
     "ordinary realtime records stay separate from formal calibration archives");
 
-Console.WriteLine($"PASS: protocol, standard rules, results, formal archive, Excel/Word reports and independent realtime CSV assertions; test archive: {storageJobDirectory}");
+Console.WriteLine($"PASS: protocol, standard rules, results, formal archive, Excel/Word/PDF reports and independent realtime CSV assertions; test archive: {storageJobDirectory}");

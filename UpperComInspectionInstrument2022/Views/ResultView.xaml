@@ -32,11 +32,15 @@
 
         <Border Grid.Row="4" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="28,12" Margin="0,18,0,0">
             <DockPanel>
-                <TextBlock Text="Excel 原始记录与 Word 证书均从本次作业的固化 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B" VerticalAlignment="Center"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Excel、Word 与 PDF 均从本次作业的冻结 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B"/>
+                    <TextBlock x:Name="ReportFilesStatusTextBlock" Text="报告状态：Excel 未生成 · Word 未生成 · PDF 未生成" Margin="0,4,0,0" Foreground="#334155" FontWeight="SemiBold"/>
+                </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/>
                     <Button x:Name="OpenReportButton" Content="生成 Excel 原始记录" Click="OpenReportButton_Click" Padding="20,9" Margin="0,0,10,0"/>
-                    <Button x:Name="GenerateWordCertificateButton" Content="生成 Word 证书" Click="GenerateWordCertificateButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+                    <Button x:Name="GenerateWordCertificateButton" Content="生成 Word 证书" Click="GenerateWordCertificateButton_Click" Padding="20,9" Margin="0,0,10,0"/>
+                    <Button x:Name="GeneratePdfArchiveButton" Content="生成 PDF 归档" Click="GeneratePdfArchiveButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/>
                 </StackPanel>
             </DockPanel>
         </Border>

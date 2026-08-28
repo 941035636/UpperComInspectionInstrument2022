@@ -117,6 +117,13 @@ internal static class Program
             throw new InvalidOperationException("negative deviation presentation is ambiguous: " + deviation);
         if (!Find<Button>(resultPage, "GenerateWordCertificateButton").IsEnabled)
             throw new InvalidOperationException("completed calibration should enable the Word certificate entry");
+        if (!Find<Button>(resultPage, "GeneratePdfArchiveButton").IsEnabled)
+            throw new InvalidOperationException("completed calibration should enable the PDF archive entry");
+        string reportStatus = Find<TextBlock>(resultPage, "ReportFilesStatusTextBlock").Text;
+        if (!reportStatus.Contains("Excel", StringComparison.Ordinal) ||
+            !reportStatus.Contains("Word", StringComparison.Ordinal) ||
+            !reportStatus.Contains("PDF", StringComparison.Ordinal))
+            throw new InvalidOperationException("result page should expose all report file states: " + reportStatus);
     }
 
     private static void VerifyWorkbenchNavigationKeepsPageInstance()

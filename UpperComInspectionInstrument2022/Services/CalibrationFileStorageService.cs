@@ -709,7 +709,15 @@ namespace UpperComInspectionInstrument2022.Services
         public string ResultFilePath { get; init; } = string.Empty;
         public string UncertaintyFilePath { get; init; } = string.Empty;
         public string ExcelReportFilePath => Path.Combine(DirectoryPath, "报告", "校准原始记录.xlsx");
+        /// <summary>供历史列表直接显示 Excel 是否已经生成。</summary>
+        public string ExcelReportStatus => File.Exists(ExcelReportFilePath) ? "已生成" : "未生成";
         /// <summary>该作业生成后的 Word 校准证书路径。</summary>
         public string WordCertificateFilePath => Path.Combine(DirectoryPath, "报告", "校准证书.docx");
+        /// <summary>供历史列表直接显示 Word 是否已经生成。</summary>
+        public string WordCertificateStatus => File.Exists(WordCertificateFilePath) ? "已生成" : "未生成";
+        /// <summary>该作业生成后的 PDF 归档报告路径。</summary>
+        public string PdfArchiveFilePath => Path.Combine(DirectoryPath, "报告", "校准归档.pdf");
+        /// <summary>供历史列表直接显示 PDF 是否已经生成。</summary>
+        public string PdfArchiveStatus => File.Exists(PdfArchiveFilePath) ? "已生成" : "未生成";
     }
 }

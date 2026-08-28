@@ -1,7 +1,5 @@
-using DocumentFormat.OpenXml.Drawing.Diagrams;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection.Emit;
 using System.Windows;
 using System.Windows.Controls;
 using UpperComInspectionInstrument2022.Models;
@@ -10,7 +8,7 @@ using UpperComInspectionInstrument2022.Services;
 namespace UpperComInspectionInstrument2022.Views
 {
     /// <summary>
-    /// 当前校准结果页：从正式样本重新计算并按所选规范展示对应指标，同时提供 Excel 原始记录和 Word 证书入口。
+    /// 当前校准结果页：从正式样本重新计算并按所选规范展示对应指标，同时提供 Excel、Word 和 PDF 报告入口。
     /// </summary>
     public partial class ResultView : Page
     {
@@ -31,6 +29,8 @@ namespace UpperComInspectionInstrument2022.Views
                 : $"{CalibrationTaskContext.ReferencedStandardName} · {CalibrationTaskContext.ReferencedCertificateNumber} · 有效期 {CalibrationTaskContext.ReferencedValidityDate:yyyy-MM-dd}";
             OpenReportButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             GenerateWordCertificateButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
+            GeneratePdfArchiveButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
+            RefreshReportFilesStatus();
             ShowResults();
         }
 
@@ -54,13 +54,6 @@ namespace UpperComInspectionInstrument2022.Views
                 ResultHintTextBlock.Text = result.Message;
                 return;
             }
-            /**/
-            else if (result.IsValid == false)
-            {
-                ResultHintTextBlock.Text = result.Message;
-                return;
-            }
-
             ResultStatusTextBlock.Text = "正式样本已按规范公式完成计算";
             ResultHintTextBlock.Text = "量值按规范公式计算，不确定度按附录示例的重复性、分辨力、证书修正值和稳定性等分量计算；表中参考技术指标不直接作为合格判据，出证前仍需核验原始记录和分量来源。";
             ResultStatusTextBlock.Foreground = System.Windows.Media.Brushes.DarkGreen;
@@ -100,12 +93,6 @@ namespace UpperComInspectionInstrument2022.Views
             hint.Text = hintText;
         }
 
-        private static string GetMetric(TextBlock Label)
-        {
-            string labtxt = Label.Text;
-            return labtxt;
-        }
-
         /// <summary>将上、下偏差显式标注并按真实正负号显示，避免负上偏差出现“+-”等歧义。</summary>
         private static string FormatUpperLower(double upper, double lower, string unit) =>
             $"上 {FormatSigned(upper)} / 下 {FormatSigned(lower)} {unit}";
@@ -141,6 +128,7 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            RefreshReportFilesStatus();
             try
             {
                 Process.Start(new ProcessStartInfo(reportPath) { UseShellExecute = true });
@@ -165,6 +153,7 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            RefreshReportFilesStatus();
             try
             {
                 Process.Start(new ProcessStartInfo(certificatePath) { UseShellExecute = true });
@@ -173,6 +162,41 @@ namespace UpperComInspectionInstrument2022.Views
             {
                 MessageBox.Show($"Word 校准证书已生成，但无法调用系统默认办公软件打开：\n{certificatePath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+        }
+
+        /// <summary>从当前已完成作业的冻结 CSV 生成 PDF 归档报告并调用系统默认阅读器打开。</summary>
+        private void GeneratePdfArchiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
+            if (string.IsNullOrWhiteSpace(jobDirectory))
+            {
+                MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 PDF 归档报告。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (!CalibrationPdfArchiveService.Default.TryGenerate(jobDirectory, out string archivePath, out string error))
+            {
+                MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            RefreshReportFilesStatus();
+            try
+            {
+                Process.Start(new ProcessStartInfo(archivePath) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"PDF 归档报告已生成，但无法调用系统默认阅读器打开：\n{archivePath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        /// <summary>按当前作业目录中的实际文件刷新三类报告状态，不依赖内存标记。</summary>
+        private void RefreshReportFilesStatus()
+        {
+            string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
+            string Status(string fileName) => !string.IsNullOrWhiteSpace(jobDirectory) && File.Exists(Path.Combine(jobDirectory, "报告", fileName))
+                ? "已生成"
+                : "未生成";
+            ReportFilesStatusTextBlock.Text = $"报告状态：Excel {Status("校准原始记录.xlsx")} · Word {Status("校准证书.docx")} · PDF {Status("校准归档.pdf")}";
         }
     }
 }

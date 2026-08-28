@@ -26,19 +26,19 @@
         </Border>
         <Border Grid.Row="2" Margin="28,14,28,28" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="7">
             <Grid>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                <DockPanel Margin="14,10">
-                    <TextBlock Text="本地校准作业" FontSize="17" FontWeight="SemiBold" Foreground="#0F172A" VerticalAlignment="Center"/>
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <TextBlock Margin="14,10,14,4" Text="本地校准作业" FontSize="17" FontWeight="SemiBold" Foreground="#0F172A" VerticalAlignment="Center"/>
+                <WrapPanel Grid.Row="1" Margin="14,0,14,10" HorizontalAlignment="Right">
                         <Button Content="打开选中作业" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedJobButton_Click"/>
                         <Button Content="打开采样 CSV" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedSampleButton_Click"/>
                         <Button Content="打开结果 CSV" Padding="14,7" Margin="0,0,8,0" Click="OpenSelectedResultButton_Click"/>
                         <Button Content="生成/更新 Excel" Padding="14,7" Margin="0,0,8,0" Background="#2563EB" Foreground="White" BorderThickness="0" Click="GenerateExcelReportButton_Click"/>
                         <Button Content="打开 Excel" Padding="14,7" Margin="0,0,8,0" Click="OpenExcelReportButton_Click"/>
-                        <Button Content="生成/更新 Word" Padding="14,7" Background="#2563EB" Foreground="White" BorderThickness="0" Click="GenerateWordCertificateButton_Click"/>
-                    </StackPanel>
-                </DockPanel>
-                <DataGrid Grid.Row="1" x:Name="HistoryDataGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Visibility="Collapsed" SelectionMode="Single" MouseDoubleClick="HistoryDataGrid_MouseDoubleClick">
+                        <Button Content="生成/更新 Word" Padding="14,7" Margin="0,0,8,0" Click="GenerateWordCertificateButton_Click"/>
+                        <Button Content="生成/更新 PDF" Padding="14,7" Margin="0,0,8,0" Background="#2563EB" Foreground="White" BorderThickness="0" Click="GeneratePdfArchiveButton_Click"/>
+                        <Button Content="打开 PDF" Padding="14,7" Click="OpenPdfArchiveButton_Click"/>
+                </WrapPanel>
+                <DataGrid Grid.Row="2" x:Name="HistoryDataGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Visibility="Collapsed" SelectionMode="Single" MouseDoubleClick="HistoryDataGrid_MouseDoubleClick">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="任务时间" Binding="{Binding TaskTime}" Width="150"/>
                         <DataGridTextColumn Header="任务编号" Binding="{Binding JobId}" Width="190"/>
@@ -48,10 +48,13 @@
                         <DataGridTextColumn Header="校准类型" Binding="{Binding Type}" Width="120"/>
                         <DataGridTextColumn Header="样本" Binding="{Binding SampleProgress}" Width="80"/>
                         <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="110"/>
+                        <DataGridTextColumn Header="Excel" Binding="{Binding ExcelReportStatus}" Width="76"/>
+                        <DataGridTextColumn Header="Word" Binding="{Binding WordCertificateStatus}" Width="76"/>
+                        <DataGridTextColumn Header="PDF 归档" Binding="{Binding PdfArchiveStatus}" Width="90"/>
                         <DataGridTextColumn Header="状态说明" Binding="{Binding StatusMessage}" Width="220"/>
                     </DataGrid.Columns>
                 </DataGrid>
-                <StackPanel Grid.Row="1" x:Name="EmptyStatePanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                <StackPanel Grid.Row="2" x:Name="EmptyStatePanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
                     <Border Width="54" Height="54" CornerRadius="27" Background="#EFF6FF" HorizontalAlignment="Center"><TextBlock Text="□" FontSize="25" Foreground="#2563EB" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                     <TextBlock Text="暂无符合条件的本地校准作业" FontSize="19" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Center" Margin="0,16,0,0"/>
                     <TextBlock Text="启动正式校准后，系统会立即建立作业目录；已完成、已中断和保存异常的作业都会保留，便于追溯。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#64748B" Margin="0,8,0,0"/>

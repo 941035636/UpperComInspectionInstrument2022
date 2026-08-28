@@ -72,6 +72,7 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            RefreshHistory();
             OpenPath(reportPath);
         }
 
@@ -96,7 +97,33 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            RefreshHistory();
             OpenPath(certificatePath);
+        }
+
+        /// <summary>为所选已完成作业生成或更新 PDF 归档报告，并用默认阅读器打开。</summary>
+        private void GeneratePdfArchiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (!CalibrationPdfArchiveService.Default.TryGenerate(selected.DirectoryPath, out string archivePath, out string error))
+            {
+                MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            RefreshHistory();
+            OpenPath(archivePath);
+        }
+
+        /// <summary>打开所选作业已经生成的 PDF 归档报告。</summary>
+        private void OpenPdfArchiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (!File.Exists(selected.PdfArchiveFilePath))
+            {
+                MessageBox.Show("该作业尚未生成 PDF 归档报告，请先点击“生成/更新 PDF”。", "PDF 报告不存在", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            OpenPath(selected.PdfArchiveFilePath);
         }
 
         /// <summary>双击历史行时打开对应作业文件夹。</summary>
