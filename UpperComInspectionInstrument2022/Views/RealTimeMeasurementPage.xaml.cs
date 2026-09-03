@@ -527,7 +527,8 @@ namespace UpperComInspectionInstrument2022.Views
                     realtimeSessionStarted = true;
                 }
 
-                _acquisitionService.Start(slaveAddress, interval, calibrationType);
+                if (!_acquisitionService.Start(slaveAddress, interval, calibrationType))
+                    throw new InvalidOperationException("上一次采集仍在停止，请等待巡检仪当前请求结束后再试。");
                 _viewModel.IsAcquiring = true;
                 _trendLooksStable = false;
                 _requiredChannelsValid = false;
@@ -646,18 +647,34 @@ namespace UpperComInspectionInstrument2022.Views
             return true;
         }
 
-        /// <summary>停止实时采集并释放串口；若正式校准尚未完成，同时将本地作业标记为中断。</summary>
-        private void StopAcquisitionButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 暂停实时采集并等待当前串口请求完整退出；若正式校准尚未完成，同时将本地作业标记为中断。
+        /// </summary>
+        private async void StopAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
-            // 只有用户明确点击“暂停/停止”时才停止后台采集。
+            // 先禁止可能创建新请求的按钮，再异步等待后台循环退出，等待期间 UI 仍可正常重绘。
+            StopAcquisitionButton.IsEnabled = false;
+            StartAcquisitionButton.IsEnabled = false;
+            ConnectDeviceButton.IsEnabled = false;
+            StatusTextBlock.Text = "正在暂停，等待当前巡检仪请求结束…";
             string storageWarning = string.Empty;
             string realtimeStorageWarning = string.Empty;
             if (_calibrationRunning)
                 CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
             _realtimeStorageService.TryEndSession("已停止", "操作人员停止实时测量", out realtimeStorageWarning);
-            _acquisitionService.Stop();
-            _viewModel.IsAcquiring = false;
             _calibrationRunning = false;
+            try
+            {
+                await _acquisitionService.StopAsync();
+            }
+            catch (Exception ex)
+            {
+                realtimeStorageWarning = string.IsNullOrWhiteSpace(realtimeStorageWarning)
+                    ? "停止采集循环时发生异常：" + ex.Message
+                    : realtimeStorageWarning + "；停止采集循环时发生异常：" + ex.Message;
+            }
+
+            _viewModel.IsAcquiring = false;
             _trendLooksStable = false;
             _requiredChannelsValid = false;
             StartCalibrationButton.Content = "启动校准";
@@ -1110,12 +1127,29 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateParameterVisibility();
         }
 
-        /// <summary>处理不可继续的采集异常：中断正式作业、停止循环、释放串口并恢复界面。</summary>
+        /// <summary>
+        /// 处理采集异常：前两次按退避时间自动重试；连续失败达到上限后才中断作业并释放串口。
+        /// </summary>
         private void OnAcquisitionError(Exception ex)
         {
+            int failureCount = _acquisitionService.ConsecutiveFailureCount;
+            int retryDelay = _acquisitionService.NextRetryDelayMilliseconds;
+            if (failureCount < _acquisitionService.MaxConsecutiveFailures)
+            {
+                _deviceResponding = false;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    UpdateConnectionStatus();
+                    StabilityTextBlock.Text = $"通信波动，正在重试（{failureCount}/{_acquisitionService.MaxConsecutiveFailures}）";
+                    StabilityTextBlock.Foreground = Brushes.DarkOrange;
+                    StatusTextBlock.Text = $"巡检仪本轮读取失败，{retryDelay / 1000.0:0.#} s 后自动重试：{ex.Message}";
+                });
+                return;
+            }
+
             if (_calibrationRunning)
-                CalibrationFileStorageService.Default.TryMarkInterrupted("巡检仪采集异常导致正式校准中断：" + ex.Message, out _);
-            _realtimeStorageService.TryEndSession("采集异常", ex.Message, out _);
+                CalibrationFileStorageService.Default.TryMarkInterrupted($"巡检仪连续 {failureCount} 次采集异常导致正式校准中断：{ex.Message}", out _);
+            _realtimeStorageService.TryEndSession("采集异常", $"连续 {failureCount} 次读取失败：{ex.Message}", out _);
             _deviceResponding = false;
             _requiredChannelsValid = false;
             _trendLooksStable = false;
@@ -1134,8 +1168,12 @@ namespace UpperComInspectionInstrument2022.Views
                 UpdateConnectionStatus();
                 //UpdateRealtimeRecordStatus(ex.Message);
                 EvaluateFormalReadiness();
-                StatusTextBlock.Text = "采集异常，已停止并释放串口";
-                MessageBox.Show(ex.Message, "采集异常", MessageBoxButton.OK, MessageBoxImage.Error);
+                StatusTextBlock.Text = $"连续 {failureCount} 次读取失败，已停止并释放串口";
+                MessageBox.Show(
+                    $"巡检仪连续 {failureCount} 次读取失败，系统已停止请求以保护设备。\n\n最后一次错误：{ex.Message}\n\n请检查接线、电源、从站地址后重新连接。",
+                    "采集已安全停止",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             });
         }
 

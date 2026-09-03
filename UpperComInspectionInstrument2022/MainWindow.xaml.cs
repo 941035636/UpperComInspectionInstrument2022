@@ -151,7 +151,8 @@ namespace UpperComInspectionInstrument2022
             {
                 CalibrationFileStorageService.Default.TryMarkInterrupted("程序关闭，正式校准自动中断", out _);
                 RealtimeMeasurementFileStorageService.Default.TryEndSession("程序关闭", "应用关闭，实时测量记录已结束", out _);
-                _acquisitionService.Stop();
+                // 最多等待一个串口超时周期外加余量，避免窗口关闭时仍有旧请求访问已释放的串口。
+                _acquisitionService.StopAndWait(TimeSpan.FromSeconds(4));
                 _modbusClient.Close();
                 _modbusClient.Dispose();
             }

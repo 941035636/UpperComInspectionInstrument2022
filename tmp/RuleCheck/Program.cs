@@ -446,4 +446,71 @@ Assert(!File.Exists(Path.Combine(realtimeSessionDirectory, "正式采样.csv")) 
        !string.Equals(realtimeSessionDirectory, storageJobDirectory, StringComparison.OrdinalIgnoreCase),
     "ordinary realtime records stay separate from formal calibration archives");
 
+// 采集生命周期回归：停止只发出取消信号时，旧同步读尚未返回，第二次启动必须被拒绝。
+BlockingMeasurementReader blockingReader = new();
+InspectionDataAcquisitionService lifecycleService = new(blockingReader);
+Assert(lifecycleService.Start(1, 200, "温度"), "first acquisition loop starts");
+Assert(blockingReader.ReadEntered.Wait(TimeSpan.FromSeconds(2)), "blocking reader receives first request");
+lifecycleService.Stop();
+Assert(lifecycleService.IsRunning && !lifecycleService.Start(1, 200, "温度"),
+    "rapid restart is rejected until the previous device read exits");
+blockingReader.AllowReadToReturn.Set();
+await lifecycleService.StopAsync();
+Assert(!lifecycleService.IsRunning, "stopped acquisition loop fully exits");
+
+TaskCompletionSource<bool> restartedData = new(TaskCreationOptions.RunContinuationsAsynchronously);
+lifecycleService.DataAcquired += (_, _) => restartedData.TrySetResult(true);
+Assert(lifecycleService.Start(1, 200, "温度"), "acquisition can restart after the old loop exits");
+await restartedData.Task.WaitAsync(TimeSpan.FromSeconds(2));
+await lifecycleService.StopAsync();
+
+// 通信退避回归：连续错误按 1 s、2 s、3 s 递增，并在第三次后自动停止，不能无限轰击设备。
+AlwaysFailMeasurementReader failingReader = new();
+InspectionDataAcquisitionService retryService = new(failingReader);
+List<(int Count, int Delay)> observedFailures = new();
+TaskCompletionSource<bool> failureLimitReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+retryService.AcquisitionError += _ =>
+{
+    observedFailures.Add((retryService.ConsecutiveFailureCount, retryService.NextRetryDelayMilliseconds));
+    if (retryService.ConsecutiveFailureCount >= retryService.MaxConsecutiveFailures)
+        failureLimitReached.TrySetResult(true);
+};
+Assert(retryService.Start(1, 200, "温度"), "retry acquisition loop starts");
+await failureLimitReached.Task.WaitAsync(TimeSpan.FromSeconds(6));
+await retryService.StopAsync();
+Assert(observedFailures.SequenceEqual(new[] { (1, 1000), (2, 2000), (3, 3000) }),
+    "communication failures use bounded backoff and stop at the configured limit");
+Assert(!retryService.IsRunning && failingReader.ReadCount == 3,
+    "failure limit stops the request loop without an unbounded fourth read");
+
 Console.WriteLine($"PASS: protocol, standard rules, results, formal archive, Excel/Word/PDF reports and independent realtime CSV assertions; test archive: {storageJobDirectory}");
+
+/// <summary>用于验证“同步设备读尚未返回”场景的可控读取器。</summary>
+sealed class BlockingMeasurementReader : IInspectionMeasurementReader
+{
+    public ManualResetEventSlim ReadEntered { get; } = new(false);
+    public ManualResetEventSlim AllowReadToReturn { get; } = new(false);
+
+    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    {
+        ReadEntered.Set();
+        if (!AllowReadToReturn.Wait(TimeSpan.FromSeconds(5)))
+            throw new TimeoutException("自动检查未释放模拟设备读操作。");
+        return new List<InspectionChannelData>
+        {
+            new() { Channel = 1, Type = ChannelType.Temperature, Value = 20, IsValid = true }
+        };
+    }
+}
+
+/// <summary>用于验证有限重试和退避节拍的固定失败读取器。</summary>
+sealed class AlwaysFailMeasurementReader : IInspectionMeasurementReader
+{
+    public int ReadCount { get; private set; }
+
+    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    {
+        ReadCount++;
+        throw new TimeoutException("模拟巡检仪无响应。");
+    }
+}

@@ -62,7 +62,7 @@
                     </StackPanel>
                     <StackPanel Grid.Row="1">
                         <TextBlock Text="主要功能" Foreground="#64748B" FontSize="11" Margin="20,12,20,3"/>
-                        <Button x:Name="CalibrationTaskButton" Content="校准作业" Click="CalibrationTaskButton_Click" Style="{StaticResource NavigationButton}"/>
+                        <Button x:Name="CalibrationTaskButton" Content="实时采集与校准" Click="CalibrationTaskButton_Click" Style="{StaticResource NavigationButton}"/>
                         <Button x:Name="HistoryButton" Content="历史记录" Click="HistoryButton_Click" Style="{StaticResource NavigationButton}"/>
                         <TextBlock Text="系统" Foreground="#64748B" FontSize="11" Margin="20,16,20,3"/>
                         <Button x:Name="SettingsButton" Content="系统设置" Click="SettingsButton_Click" Style="{StaticResource NavigationButton}"/>

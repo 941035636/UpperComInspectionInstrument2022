@@ -10,7 +10,7 @@ namespace UpperComInspectionInstrument2022.Services
     /// 巡检仪协议适配层：把 Modbus 寄存器转换为有业务含义的温度、湿度通道。
     /// 本类只负责寄存器地址、字节序、特殊值和通道角色，不负责页面显示与校准判定。
     /// </summary>
-    public class InspectionMeterService
+    public class InspectionMeterService : IInspectionMeasurementReader
     {
         private readonly ModbusRtuClient _client;
 
