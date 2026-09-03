@@ -69,9 +69,11 @@ namespace UpperComInspectionInstrument2022.Views
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
             if (!CalibrationExcelReportService.Default.TryGenerate(selected.DirectoryPath, out string reportPath, out string error))
             {
+                WriteReportOperation(selected, "生成 Excel 原始记录", "失败", error, selected.DirectoryPath);
                 MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation(selected, "生成 Excel 原始记录", "成功", "已从冻结 CSV 生成", reportPath);
             RefreshHistory();
             OpenPath(reportPath);
         }
@@ -94,9 +96,11 @@ namespace UpperComInspectionInstrument2022.Views
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
             if (!CalibrationWordCertificateService.Default.TryGenerate(selected.DirectoryPath, out string certificatePath, out string error))
             {
+                WriteReportOperation(selected, "生成 Word 校准证书", "失败", error, selected.DirectoryPath);
                 MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation(selected, "生成 Word 校准证书", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
             RefreshHistory();
             OpenPath(certificatePath);
         }
@@ -107,9 +111,11 @@ namespace UpperComInspectionInstrument2022.Views
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
             if (!CalibrationPdfArchiveService.Default.TryGenerate(selected.DirectoryPath, out string archivePath, out string error))
             {
+                WriteReportOperation(selected, "生成 PDF 归档报告", "失败", error, selected.DirectoryPath);
                 MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation(selected, "生成 PDF 归档报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", archivePath);
             RefreshHistory();
             OpenPath(archivePath);
         }
@@ -180,6 +186,25 @@ namespace UpperComInspectionInstrument2022.Views
             {
                 MessageBox.Show($"无法调用系统默认程序打开：\n{path}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>记录历史作业报告生成动作，不依赖当前内存中的任务状态。</summary>
+        private static void WriteReportOperation(
+            CalibrationArchiveSummary archive,
+            string operation,
+            string result,
+            string description,
+            string relatedPath)
+        {
+            LocalTraceService.Default.TryWriteOperation(operation, result, archive.JobId, description, relatedPath, out _);
+            LocalTraceService.Default.TryWriteRuntime(
+                result == "成功" ? "信息" : "错误",
+                "报告",
+                operation,
+                description,
+                archive.JobId,
+                relatedPath,
+                out _);
         }
 
         /// <summary>从空历史状态返回校准作业入口。</summary>

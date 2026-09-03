@@ -55,6 +55,76 @@ namespace UpperComInspectionInstrument2022.Services
             get { lock (_syncRoot) return _currentJobDirectory != null && _status == "采样中"; }
         }
 
+        /// <summary>当前正式作业编号；没有活动或已完成作业时仍保留最近一次编号供界面记录。</summary>
+        public string CurrentJobId
+        {
+            get { lock (_syncRoot) return _currentJobId; }
+        }
+
+        /// <summary>
+        /// 启动时扫描遗留的“采样中”作业并标记为“已中断”。
+        /// 该方法只修改摘要状态，已经落盘的任务、正式样本和原始通道不会被删除或覆盖。
+        /// </summary>
+        public int RecoverAbandonedJobs(out string error)
+        {
+            lock (_syncRoot)
+            {
+                if (!Directory.Exists(DataRootPath))
+                {
+                    error = string.Empty;
+                    return 0;
+                }
+
+                int recoveredCount = 0;
+                List<string> failures = new();
+                string[] directories;
+                try
+                {
+                    directories = Directory.GetDirectories(DataRootPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    error = $"无法扫描历史作业：{ex.Message}\n数据目录：{DataRootPath}";
+                    return 0;
+                }
+
+                foreach (string directory in directories)
+                {
+                    string summaryPath = Path.Combine(directory, SummaryFileName);
+                    if (!File.Exists(summaryPath)) continue;
+                    try
+                    {
+                        List<string[]> rows = ParseCsv(File.ReadAllText(summaryPath, Encoding.UTF8));
+                        if (rows.Count < 2) continue;
+                        string[] header = rows[0];
+                        int statusIndex = Array.IndexOf(header, "状态");
+                        int finishedAtIndex = Array.IndexOf(header, "结束时间");
+                        int messageIndex = Array.IndexOf(header, "状态说明");
+                        if (statusIndex < 0 || finishedAtIndex < 0 || messageIndex < 0) continue;
+
+                        string[] values = rows[1];
+                        int requiredLength = Math.Max(statusIndex, Math.Max(finishedAtIndex, messageIndex)) + 1;
+                        if (values.Length < requiredLength) Array.Resize(ref values, requiredLength);
+                        if (!string.Equals(values[statusIndex], "采样中", StringComparison.Ordinal)) continue;
+
+                        values[finishedAtIndex] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+                        values[statusIndex] = "已中断";
+                        values[messageIndex] = "检测到程序上次未正常结束，启动时已自动标记为中断；已保存样本继续保留。";
+                        rows[1] = values;
+                        WriteCsvAtomic(summaryPath, rows);
+                        recoveredCount++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or FormatException)
+                    {
+                        failures.Add($"{Path.GetFileName(directory)}：{ex.Message}");
+                    }
+                }
+
+                error = failures.Count == 0 ? string.Empty : "部分遗留作业未能恢复：" + string.Join("；", failures);
+                return recoveredCount;
+            }
+        }
+
         /// <summary>
         /// 为一轮正式校准建立独立目录，并写入任务快照及带表头的样本文件。
         /// </summary>

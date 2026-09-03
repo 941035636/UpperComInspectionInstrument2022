@@ -73,6 +73,69 @@ namespace UpperComInspectionInstrument2022.Services
         }
 
         /// <summary>
+        /// 启动时把上次异常退出遗留的“记录中”会话标记为“已中断”，已写入的实时 CSV 保持不变。
+        /// </summary>
+        public int RecoverAbandonedSessions(out string error)
+        {
+            lock (_syncRoot)
+            {
+                if (!Directory.Exists(DataRootPath))
+                {
+                    error = string.Empty;
+                    return 0;
+                }
+
+                int recoveredCount = 0;
+                List<string> failures = new();
+                string[] directories;
+                try
+                {
+                    directories = Directory.GetDirectories(DataRootPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    error = $"无法扫描实时测量记录：{ex.Message}\n数据目录：{DataRootPath}";
+                    return 0;
+                }
+
+                foreach (string directory in directories)
+                {
+                    string summaryPath = Path.Combine(directory, SummaryFileName);
+                    if (!File.Exists(summaryPath)) continue;
+                    try
+                    {
+                        List<string[]> rows = CalibrationFileStorageService.ReadCsvFile(summaryPath);
+                        if (rows.Count < 2) continue;
+                        string[] header = rows[0];
+                        int statusIndex = Array.IndexOf(header, "状态");
+                        int finishedAtIndex = Array.IndexOf(header, "结束时间");
+                        int messageIndex = Array.IndexOf(header, "状态说明");
+                        if (statusIndex < 0 || finishedAtIndex < 0 || messageIndex < 0) continue;
+
+                        string[] values = rows[1];
+                        int requiredLength = Math.Max(statusIndex, Math.Max(finishedAtIndex, messageIndex)) + 1;
+                        if (values.Length < requiredLength) Array.Resize(ref values, requiredLength);
+                        if (!string.Equals(values[statusIndex], "记录中", StringComparison.Ordinal)) continue;
+
+                        values[finishedAtIndex] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+                        values[statusIndex] = "已中断";
+                        values[messageIndex] = "检测到程序上次未正常结束，启动时已自动标记为中断；已保存实时数据继续保留。";
+                        rows[1] = values;
+                        WriteCsvAtomic(summaryPath, rows);
+                        recoveredCount++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or FormatException)
+                    {
+                        failures.Add($"{Path.GetFileName(directory)}：{ex.Message}");
+                    }
+                }
+
+                error = failures.Count == 0 ? string.Empty : "部分实时测量会话未能恢复：" + string.Join("；", failures);
+                return recoveredCount;
+            }
+        }
+
+        /// <summary>
         /// 建立一个新的实时记录目录并写入摘要及动态表头。若记录目录无法建立，则不应启动带保存承诺的实时测量。
         /// </summary>
         public bool TryBeginSession(RealtimeMeasurementSessionInfo info, out string error)

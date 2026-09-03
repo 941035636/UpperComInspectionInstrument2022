@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -32,8 +33,53 @@ namespace UpperComInspectionInstrument2022
             InspectionMeterService inspectionMeterService = new InspectionMeterService(_modbusClient);
             _acquisitionService = new InspectionDataAcquisitionService(inspectionMeterService);
 
+            int recoveredJobs = CalibrationFileStorageService.Default.RecoverAbandonedJobs(out string jobRecoveryError);
+            int recoveredRealtimeSessions = RealtimeMeasurementFileStorageService.Default.RecoverAbandonedSessions(out string realtimeRecoveryError);
+            List<string> recoveryErrors = new();
+            if (!string.IsNullOrWhiteSpace(jobRecoveryError)) recoveryErrors.Add(jobRecoveryError);
+            if (!string.IsNullOrWhiteSpace(realtimeRecoveryError)) recoveryErrors.Add(realtimeRecoveryError);
+            string startupDetails = $"恢复正式作业 {recoveredJobs} 个，恢复实时会话 {recoveredRealtimeSessions} 个";
+            if (recoveryErrors.Count > 0) startupDetails += "；" + string.Join("；", recoveryErrors);
+            LocalTraceService.Default.TryWriteRuntime(
+                recoveryErrors.Count == 0 ? "信息" : "警告",
+                "应用",
+                "程序启动",
+                startupDetails,
+                string.Empty,
+                CalibrationFileStorageService.Default.DataRootPath,
+                out _);
+            if (recoveredJobs + recoveredRealtimeSessions > 0)
+            {
+                LocalTraceService.Default.TryWriteOperation(
+                    "恢复异常退出记录",
+                    "成功",
+                    string.Empty,
+                    startupDetails,
+                    CalibrationFileStorageService.Default.DataRootPath,
+                    out _);
+            }
+
             ShowTaskConfigurationPage();
-            SetStatus("系统启动完成");
+            SetStatus(recoveredJobs + recoveredRealtimeSessions > 0
+                ? $"系统启动完成；已标记 {recoveredJobs + recoveredRealtimeSessions} 个上次中断记录"
+                : "系统启动完成");
+
+            if (recoveryErrors.Count > 0)
+            {
+                MessageBox.Show(
+                    string.Join("\n", recoveryErrors),
+                    "历史记录恢复不完整",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            else if (recoveredJobs + recoveredRealtimeSessions > 0)
+            {
+                MessageBox.Show(
+                    $"检测到上次未正常结束的记录：正式作业 {recoveredJobs} 个、实时测量 {recoveredRealtimeSessions} 个。\n\n系统已标记为“已中断”，已保存数据没有删除，可在历史目录中复核。",
+                    "已恢复上次中断记录",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
         }
 
         /// <summary>
@@ -149,6 +195,9 @@ namespace UpperComInspectionInstrument2022
         {
             try
             {
+                LocalTraceService.Default.TryWriteRuntime(
+                    "信息", "应用", "程序关闭", "操作人员关闭应用", CalibrationFileStorageService.Default.CurrentJobId,
+                    CalibrationFileStorageService.Default.CurrentJobDirectory ?? string.Empty, out _);
                 CalibrationFileStorageService.Default.TryMarkInterrupted("程序关闭，正式校准自动中断", out _);
                 RealtimeMeasurementFileStorageService.Default.TryEndSession("程序关闭", "应用关闭，实时测量记录已结束", out _);
                 // 最多等待一个串口超时周期外加余量，避免窗口关闭时仍有旧请求访问已释放的串口。

@@ -570,6 +570,14 @@ namespace UpperComInspectionInstrument2022.Views
             SaveTask(rule, includesHumidity, setTemperature, setHumidity, temperatureCount, humidityCount, temperatureCenter,
                 humidityCenter, plannedCount, samplingInterval, stableWait, dutTemperatureResolution, dutHumidityResolution,
                 ambientTemperature, ambientHumidity, ambientPressure);
+            string standard = StandardComboBox.SelectedIndex == 1 ? "JJF 1376-2012" : "JJF 1101-2019";
+            LocalTraceService.Default.TryWriteOperation(
+                "保存校准任务",
+                "成功",
+                "当前任务",
+                $"{standard}；设定温度 {setTemperature:0.###} ℃；温度 {temperatureCount} 点；湿度 {humidityCount} 点；正式样本 {plannedCount} 组",
+                string.Empty,
+                out _);
             TaskStatusTextBlock.Text = "任务已保存，标准器资料和规范规则已固化";
             TaskStatusTextBlock.Foreground = Brushes.DarkGreen;
             if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowRealTimeMeasurementPage();

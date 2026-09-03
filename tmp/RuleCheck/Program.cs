@@ -483,7 +483,55 @@ Assert(observedFailures.SequenceEqual(new[] { (1, 1000), (2, 2000), (3, 3000) })
 Assert(!retryService.IsRunning && failingReader.ReadCount == 3,
     "failure limit stops the request loop without an unbounded fourth read");
 
-Console.WriteLine($"PASS: protocol, standard rules, results, formal archive, Excel/Word/PDF reports and independent realtime CSV assertions; test archive: {storageJobDirectory}");
+// 本地追溯回归：运行日志和业务操作记录都必须是带 BOM、可由办公软件直接打开的 CSV。
+string traceRoot = Path.Combine(storageTestRoot, "trace-check");
+LocalTraceService traceService = new(traceRoot);
+Assert(traceService.TryWriteRuntime("警告", "通信", "模拟超时", "第 1 次失败", "JOB-TRACE", "COM-TEST", out string runtimeLogError),
+    "runtime CSV log write: " + runtimeLogError);
+Assert(traceService.TryWriteOperation("启动正式校准采样", "成功", "JOB-TRACE", "自动检查", traceRoot, out string operationLogError),
+    "operation CSV log write: " + operationLogError);
+string runtimeLogPath = Path.Combine(traceService.RuntimeLogDirectory, $"运行日志-{DateTime.Now:yyyyMMdd}.csv");
+foreach (string tracePath in new[] { runtimeLogPath, traceService.OperationLogPath })
+{
+    Assert(File.Exists(tracePath) && File.ReadAllBytes(tracePath).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }),
+        "trace CSV exists with UTF-8 BOM: " + Path.GetFileName(tracePath));
+}
+Assert(File.ReadAllText(runtimeLogPath).Contains("模拟超时") &&
+       File.ReadAllText(traceService.OperationLogPath).Contains("启动正式校准采样"),
+    "trace CSV preserves runtime and business action text");
+
+// 异常退出恢复回归：新进程启动后只改摘要状态，已经落盘的样本必须继续保留。
+string abandonedJobRoot = Path.Combine(storageTestRoot, "abandoned-job-check");
+CalibrationFileStorageService abandonedJob = new(abandonedJobRoot);
+CalibrationRunContext.Begin();
+Assert(abandonedJob.TryBeginJob(out string abandonedJobBeginError), "abandoned job begin: " + abandonedJobBeginError);
+CalibrationSampleRecord abandonedSample = CalibrationRunContext.Add(Snapshot(20, 21, 22), 20, null);
+Assert(abandonedJob.TryAppendSample(abandonedSample, out string abandonedSampleError), "abandoned sample append: " + abandonedSampleError);
+string abandonedSamplePath = Path.Combine(abandonedJob.CurrentJobDirectory!, "正式采样.csv");
+long abandonedSampleLength = new FileInfo(abandonedSamplePath).Length;
+CalibrationFileStorageService jobRecoveryScanner = new(abandonedJobRoot);
+Assert(jobRecoveryScanner.RecoverAbandonedJobs(out string jobRecoveryError) == 1 && string.IsNullOrEmpty(jobRecoveryError),
+    "startup recovers one abandoned formal job: " + jobRecoveryError);
+CalibrationArchiveSummary recoveredJob = jobRecoveryScanner.LoadHistory().Single();
+Assert(recoveredJob.Status == "已中断" && recoveredJob.StatusMessage.Contains("上次未正常结束") &&
+       new FileInfo(abandonedSamplePath).Length == abandonedSampleLength,
+    "formal recovery marks summary interrupted without changing saved sample data");
+
+string abandonedRealtimeRoot = Path.Combine(storageTestRoot, "abandoned-realtime-check");
+RealtimeMeasurementFileStorageService abandonedRealtime = new(abandonedRealtimeRoot);
+Assert(abandonedRealtime.TryBeginSession(realtimeInfo, out string abandonedRealtimeBeginError),
+    "abandoned realtime begin: " + abandonedRealtimeBeginError);
+Assert(abandonedRealtime.TryAppendSnapshot(realtimeSnapshot1, out string abandonedRealtimeAppendError),
+    "abandoned realtime append: " + abandonedRealtimeAppendError);
+string abandonedRealtimeDirectory = abandonedRealtime.CurrentSessionDirectory!;
+RealtimeMeasurementFileStorageService realtimeRecoveryScanner = new(abandonedRealtimeRoot);
+Assert(realtimeRecoveryScanner.RecoverAbandonedSessions(out string realtimeRecoveryError) == 1 && string.IsNullOrEmpty(realtimeRecoveryError),
+    "startup recovers one abandoned realtime session: " + realtimeRecoveryError);
+string recoveredRealtimeSummary = File.ReadAllText(Path.Combine(abandonedRealtimeDirectory, "实时测量摘要.csv"));
+Assert(recoveredRealtimeSummary.Contains("\"已中断\"") && recoveredRealtimeSummary.Contains("上次未正常结束"),
+    "realtime recovery marks summary interrupted and keeps recorded data");
+
+Console.WriteLine($"PASS: protocol, standards, formulas, formal/realtime archives, reports, acquisition lifecycle, CSV traces and startup recovery; test archive: {storageJobDirectory}");
 
 /// <summary>用于验证“同步设备读尚未返回”场景的可控读取器。</summary>
 sealed class BlockingMeasurementReader : IInspectionMeasurementReader

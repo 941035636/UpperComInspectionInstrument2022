@@ -125,9 +125,11 @@ namespace UpperComInspectionInstrument2022.Views
             }
             if (!CalibrationExcelReportService.Default.TryGenerate(jobDirectory, out string reportPath, out string error))
             {
+                WriteReportOperation("生成 Excel 原始记录", "失败", error, jobDirectory);
                 MessageBox.Show(error, "Excel 原始记录生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation("生成 Excel 原始记录", "成功", "已从冻结 CSV 生成", reportPath);
             RefreshReportFilesStatus();
             try
             {
@@ -150,9 +152,11 @@ namespace UpperComInspectionInstrument2022.Views
             }
             if (!CalibrationWordCertificateService.Default.TryGenerate(jobDirectory, out string certificatePath, out string error))
             {
+                WriteReportOperation("生成 Word 校准证书", "失败", error, jobDirectory);
                 MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation("生成 Word 校准证书", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
             RefreshReportFilesStatus();
             try
             {
@@ -175,9 +179,11 @@ namespace UpperComInspectionInstrument2022.Views
             }
             if (!CalibrationPdfArchiveService.Default.TryGenerate(jobDirectory, out string archivePath, out string error))
             {
+                WriteReportOperation("生成 PDF 归档报告", "失败", error, jobDirectory);
                 MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+            WriteReportOperation("生成 PDF 归档报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", archivePath);
             RefreshReportFilesStatus();
             try
             {
@@ -197,6 +203,26 @@ namespace UpperComInspectionInstrument2022.Views
                 ? "已生成"
                 : "未生成";
             ReportFilesStatusTextBlock.Text = $"报告状态：Excel {Status("校准原始记录.xlsx")} · Word {Status("校准证书.docx")} · PDF {Status("校准归档.pdf")}";
+        }
+
+        /// <summary>记录当前作业的报告生成结果，便于历史复核报告由谁在何时生成。</summary>
+        private static void WriteReportOperation(string operation, string result, string description, string relatedPath)
+        {
+            LocalTraceService.Default.TryWriteOperation(
+                operation,
+                result,
+                CalibrationFileStorageService.Default.CurrentJobId,
+                description,
+                relatedPath,
+                out _);
+            LocalTraceService.Default.TryWriteRuntime(
+                result == "成功" ? "信息" : "错误",
+                "报告",
+                operation,
+                description,
+                CalibrationFileStorageService.Default.CurrentJobId,
+                relatedPath,
+                out _);
         }
     }
 }
