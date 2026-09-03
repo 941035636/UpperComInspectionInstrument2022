@@ -364,6 +364,7 @@ FodyWeavers.xsd
 
 # Local verification and source-analysis artifacts
 /verify-build/
+/TestResults/
 /对话备份/
 /tmp/HardwareProbe/
 /tmp/figure-extract/
