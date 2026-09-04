@@ -210,7 +210,6 @@ namespace UpperComInspectionInstrument2022.Views
                 StartCalibrationButton.ToolTip = reason;
             }
             StartCalibrationButton.IsEnabled = ready && !_calibrationRunning;
-
             return ready;
         }
 
@@ -254,6 +253,7 @@ namespace UpperComInspectionInstrument2022.Views
                     : "请依据设备说明书或现场状态确认设备已经稳定");
             }
 
+
             if (blockers.Count > 0)
             {
                 reason = "尚需完成：\n• " + string.Join("\n• ", blockers);
@@ -265,6 +265,7 @@ namespace UpperComInspectionInstrument2022.Views
             reason = _trendLooksStable
                 ? "正式校准条件已确认，可以开始采样。"
                 : "正式条件已确认；最近 5 组趋势仍有波动，请核实后再启动。";
+
             return true;
         }
 
@@ -419,6 +420,7 @@ namespace UpperComInspectionInstrument2022.Views
         {
             return int.TryParse(comboBox.SelectedItem as string, out int count) ? Math.Max(0, count) : 0;
         }
+
 
         /// <summary>把最新快照按温度点、湿度点顺序插入矩阵首行，最多保留 200 行。</summary>
         private void AppendMeasurementMatrixRow(MeasurementSnapshot snapshot)
@@ -1298,6 +1300,9 @@ namespace UpperComInspectionInstrument2022.Views
             PortTextBlock.Text = connected ? $"串口：{_modbusClient.PortName}" : "串口：未连接";
             BaudRateTextBlock.Text = connected ? $"波特率：{_modbusClient.BaudRate}" : "波特率：未设置";
             ConnectDeviceButton.Content = connected ? "断开巡检仪" : "连接巡检仪";
+
+            //ConnectDeviceButton.Content = !connected ? "断开" : "连接";
+
         }
 
         /// <summary>打开当前或最近一次实时测量会话目录；尚未测量时打开实时记录根目录。</summary>

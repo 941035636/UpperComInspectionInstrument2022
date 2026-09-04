@@ -114,7 +114,7 @@ namespace UpperComInspectionInstrument2022.Models
                 CalibrationTypeIndex = snapshot.CalibrationTypeIndex > 1 ? 1 : snapshot.CalibrationTypeIndex;
                 SensorTypeCode = snapshot.IsConfigured
                     ? string.IsNullOrWhiteSpace(snapshot.SensorTypeCode)
-                        ? TemperatureSensorCatalog.GetCode(snapshot.SensorTypeIndex)
+                        ? TemperatureSensorCatalog.GetLegacyCode(snapshot.SensorTypeIndex)
                         : snapshot.SensorTypeCode
                     : string.Empty;
                 SensorTypeIndex = TemperatureSensorCatalog.GetIndex(SensorTypeCode);

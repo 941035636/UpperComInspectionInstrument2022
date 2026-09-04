@@ -131,8 +131,11 @@ List<InspectionChannelData> requiredChannels = MeasurementChannelSelectionServic
 Assert(requiredChannels.Count == 2 && requiredChannels.Contains(primaryTemperature) && requiredChannels.Contains(humidityChannel),
     "matrix channels exclude humidity-probe companion temperature");
 
-Assert(TemperatureSensorCatalog.GetCode(4) == "TC_S", "legacy sensor index migration");
-Assert(TemperatureSensorCatalog.GetIndex("TC_E") == 6, "stable sensor code lookup");
+Assert(TemperatureSensorCatalog.GetLegacyCode(4) == "TC_S" &&
+       TemperatureSensorCatalog.GetLegacyCode(5) == "OTHER" &&
+       TemperatureSensorCatalog.GetLegacyCode(6) == "TC_E",
+    "legacy sensor index migration");
+Assert(TemperatureSensorCatalog.GetIndex("TC_E") == 5, "stable sensor code lookup after display reorder");
 Assert(TemperatureSensorCatalog.DisplayNames.Count == TemperatureSensorCatalog.Options.Count, "sensor display catalog alignment");
 
 static MeasurementSnapshot Snapshot(params double[] temperatures) => new()
