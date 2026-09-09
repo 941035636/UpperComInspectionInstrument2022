@@ -388,6 +388,8 @@ namespace UpperComInspectionInstrument2022.Services
                 new[] { "字段", "值" },
                 Pair("校准规范", GetStandardName()),
                 Pair("校准类型", GetCalibrationTypeName()),
+                Pair("设备容积分类索引", CalibrationTaskContext.VolumeIndex.ToString(CultureInfo.InvariantCulture)),
+                Pair("布点方式索引", CalibrationTaskContext.PointLayoutModeIndex.ToString(CultureInfo.InvariantCulture)),
                 Pair("被校设备名称", CalibrationTaskContext.EquipmentName),
                 Pair("制造单位", CalibrationTaskContext.Manufacturer),
                 Pair("型号规格", CalibrationTaskContext.ModelSpecification),
@@ -409,6 +411,10 @@ namespace UpperComInspectionInstrument2022.Services
                 Pair("计划样本数", CalibrationTaskContext.PlannedCount.ToString(CultureInfo.InvariantCulture)),
                 Pair("采样间隔(s)", CalibrationTaskContext.SamplingIntervalSeconds.ToString(CultureInfo.InvariantCulture)),
                 Pair("稳定等待(min)", CalibrationTaskContext.StableWaitMinutes.ToString(CultureInfo.InvariantCulture)),
+                Pair("外观检查", CalibrationTaskContext.AppearanceCheckIndex switch { 1 => "符合", 2 => "不符合", _ => "待检查" }),
+                Pair("炉膛长度(mm)", FormatNumber(CalibrationTaskContext.FurnaceChamberLengthMm)),
+                Pair("炉膛宽度(mm)", FormatNumber(CalibrationTaskContext.FurnaceChamberWidthMm)),
+                Pair("炉膛高度(mm)", FormatNumber(CalibrationTaskContext.FurnaceChamberHeightMm)),
                 Pair("工作区长度(mm)", FormatNumber(CalibrationTaskContext.WorkZoneLengthMm)),
                 Pair("工作区宽度(mm)", FormatNumber(CalibrationTaskContext.WorkZoneWidthMm)),
                 Pair("工作区高度(mm)", FormatNumber(CalibrationTaskContext.WorkZoneHeightMm)),
@@ -418,6 +424,8 @@ namespace UpperComInspectionInstrument2022.Services
                 Pair("环境温度(℃)", FormatNumber(CalibrationTaskContext.AmbientTemperature)),
                 Pair("环境湿度(%RH)", FormatNumber(CalibrationTaskContext.AmbientHumidity)),
                 Pair("环境气压(kPa)", FormatNumber(CalibrationTaskContext.AmbientPressure)),
+                Pair("实验室名称", CalibrationTaskContext.ReferencedLaboratoryName),
+                Pair("实验室地址", CalibrationTaskContext.ReferencedLaboratoryAddress),
                 Pair("标准器名称", CalibrationTaskContext.ReferencedStandardName),
                 Pair("标准器证书编号", CalibrationTaskContext.ReferencedCertificateNumber),
                 Pair("标准器有效期", CalibrationTaskContext.ReferencedValidityDate?.ToString("yyyy-MM-dd") ?? string.Empty),
@@ -751,10 +759,12 @@ namespace UpperComInspectionInstrument2022.Services
         private static string FormatNumber(double? value) => value.HasValue && double.IsFinite(value.Value) ? value.Value.ToString("0.############", CultureInfo.InvariantCulture) : string.Empty;
         /// <summary>把有限数格式化为 CSV 数值文本，非有限数输出空白。</summary>
         private static string FormatNumber(double value) => double.IsFinite(value) ? value.ToString("0.############", CultureInfo.InvariantCulture) : string.Empty;
+        /// <summary>最终校准结果固定保留三位小数；原始读数和中间分量仍使用完整可追溯精度。</summary>
+        private static string FormatResultNumber(double value) => double.IsFinite(value) ? value.ToString("0.000", CultureInfo.InvariantCulture) : string.Empty;
         /// <summary>创建任务快照中的“字段—值”行。</summary>
         private static string[] Pair(string name, string value) => new[] { name, value ?? string.Empty };
         /// <summary>创建结果文件中的“指标—数值—单位—说明”行。</summary>
-        private static string[] ResultRow(string name, double value, string unit, string note) => new[] { name, FormatNumber(value), unit, note };
+        private static string[] ResultRow(string name, double value, string unit, string note) => new[] { name, FormatResultNumber(value), unit, note };
     }
 
     /// <summary>

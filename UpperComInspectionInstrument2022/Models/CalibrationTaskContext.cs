@@ -47,6 +47,12 @@ namespace UpperComInspectionInstrument2022.Models
         public static double? AmbientTemperature { get; set; }
         public static double? AmbientHumidity { get; set; }
         public static double? AmbientPressure { get; set; }
+        /// <summary>JJF 1376 原始记录中的炉膛长度 L，单位 mm。</summary>
+        public static double? FurnaceChamberLengthMm { get; set; }
+        /// <summary>JJF 1376 原始记录中的炉膛宽度 W，单位 mm。</summary>
+        public static double? FurnaceChamberWidthMm { get; set; }
+        /// <summary>JJF 1376 原始记录中的炉膛高度 H，单位 mm。</summary>
+        public static double? FurnaceChamberHeightMm { get; set; }
         public static double? WorkZoneLengthMm { get; set; }
         public static double? WorkZoneWidthMm { get; set; }
         public static double? WorkZoneHeightMm { get; set; }
@@ -67,6 +73,8 @@ namespace UpperComInspectionInstrument2022.Models
         public static DateTime CalibrationDate { get; set; } = DateTime.Today;
         public static bool EnvironmentInterferenceConfirmed { get; set; }
 
+        public static string ReferencedLaboratoryName { get; set; } = string.Empty;
+        public static string ReferencedLaboratoryAddress { get; set; } = string.Empty;
         public static string ReferencedStandardName { get; set; } = string.Empty;
         public static string ReferencedCertificateNumber { get; set; } = string.Empty;
         public static DateTime? ReferencedValidityDate { get; set; }
@@ -118,7 +126,14 @@ namespace UpperComInspectionInstrument2022.Models
                         : snapshot.SensorTypeCode
                     : string.Empty;
                 SensorTypeIndex = TemperatureSensorCatalog.GetIndex(SensorTypeCode);
-                PointSelectionIndex = snapshot.PointSelectionIndex;
+                // 2026-09 起校准点方案只保留“常用点”和“客户指定点”。
+                // 旧任务没有稳定代码：旧索引 2 映射为客户指定，已删除的旧索引 1 安全回退到常用点。
+                PointSelectionIndex = snapshot.PointSelectionCode switch
+                {
+                    "customer" => 1,
+                    "common" => 0,
+                    _ => snapshot.PointSelectionIndex == 2 ? 1 : 0
+                };
                 PointLayoutModeIndex = snapshot.PointLayoutModeIndex;
                 LoadConditionIndex = snapshot.LoadConditionIndex;
                 StabilityBasisIndex = snapshot.StabilityBasisIndex;
@@ -141,6 +156,9 @@ namespace UpperComInspectionInstrument2022.Models
                 AmbientTemperature = snapshot.AmbientTemperature;
                 AmbientHumidity = snapshot.AmbientHumidity;
                 AmbientPressure = snapshot.AmbientPressure;
+                FurnaceChamberLengthMm = snapshot.FurnaceChamberLengthMm;
+                FurnaceChamberWidthMm = snapshot.FurnaceChamberWidthMm;
+                FurnaceChamberHeightMm = snapshot.FurnaceChamberHeightMm;
                 WorkZoneLengthMm = snapshot.WorkZoneLengthMm;
                 WorkZoneWidthMm = snapshot.WorkZoneWidthMm;
                 WorkZoneHeightMm = snapshot.WorkZoneHeightMm;
@@ -188,6 +206,16 @@ namespace UpperComInspectionInstrument2022.Models
         /// </summary>
         public static bool TrySnapshotCurrentStandardSettings(int standardIndex, bool includesHumidity, out string error)
         {
+            if (string.IsNullOrWhiteSpace(SystemSettingsContext.LaboratoryName))
+            {
+                error = "请先在系统设置中填写出具报告的实验室名称。";
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(SystemSettingsContext.LaboratoryAddress))
+            {
+                error = "请先在系统设置中填写实验室地址。";
+                return false;
+            }
             if (string.IsNullOrWhiteSpace(SystemSettingsContext.StandardName))
             {
                 error = "请先在系统设置中填写标准器名称。";
@@ -223,6 +251,8 @@ namespace UpperComInspectionInstrument2022.Models
                     out error))
                 return false;
 
+            ReferencedLaboratoryName = SystemSettingsContext.LaboratoryName.Trim();
+            ReferencedLaboratoryAddress = SystemSettingsContext.LaboratoryAddress.Trim();
             ReferencedStandardName = SystemSettingsContext.StandardName.Trim();
             ReferencedCertificateNumber = SystemSettingsContext.CertificateNumber.Trim();
             ReferencedValidityDate = SystemSettingsContext.ValidityDate;
@@ -335,6 +365,7 @@ namespace UpperComInspectionInstrument2022.Models
             SensorTypeIndex = SensorTypeIndex,
             SensorTypeCode = SensorTypeCode,
             PointSelectionIndex = PointSelectionIndex,
+            PointSelectionCode = PointSelectionIndex == 1 ? "customer" : "common",
             PointLayoutModeIndex = PointLayoutModeIndex,
             LoadConditionIndex = LoadConditionIndex,
             StabilityBasisIndex = StabilityBasisIndex,
@@ -355,6 +386,9 @@ namespace UpperComInspectionInstrument2022.Models
             AmbientTemperature = AmbientTemperature,
             AmbientHumidity = AmbientHumidity,
             AmbientPressure = AmbientPressure,
+            FurnaceChamberLengthMm = FurnaceChamberLengthMm,
+            FurnaceChamberWidthMm = FurnaceChamberWidthMm,
+            FurnaceChamberHeightMm = FurnaceChamberHeightMm,
             WorkZoneLengthMm = WorkZoneLengthMm,
             WorkZoneWidthMm = WorkZoneWidthMm,
             WorkZoneHeightMm = WorkZoneHeightMm,
@@ -373,6 +407,8 @@ namespace UpperComInspectionInstrument2022.Models
             Verifier = Verifier,
             CalibrationDate = CalibrationDate,
             EnvironmentInterferenceConfirmed = EnvironmentInterferenceConfirmed,
+            ReferencedLaboratoryName = ReferencedLaboratoryName,
+            ReferencedLaboratoryAddress = ReferencedLaboratoryAddress,
             ReferencedStandardName = ReferencedStandardName,
             ReferencedCertificateNumber = ReferencedCertificateNumber,
             ReferencedValidityDate = ReferencedValidityDate,
@@ -400,6 +436,8 @@ namespace UpperComInspectionInstrument2022.Models
         /// <summary>从已保存任务恢复建任务时固化的标准器资料。</summary>
         private static void CopyReferencedSettings(TaskSnapshot snapshot)
         {
+            ReferencedLaboratoryName = snapshot.ReferencedLaboratoryName ?? string.Empty;
+            ReferencedLaboratoryAddress = snapshot.ReferencedLaboratoryAddress ?? string.Empty;
             ReferencedStandardName = snapshot.ReferencedStandardName ?? string.Empty;
             ReferencedCertificateNumber = snapshot.ReferencedCertificateNumber ?? string.Empty;
             ReferencedValidityDate = snapshot.ReferencedValidityDate;
@@ -435,6 +473,8 @@ namespace UpperComInspectionInstrument2022.Models
             public int SensorTypeIndex { get; set; }
             public string? SensorTypeCode { get; set; }
             public int PointSelectionIndex { get; set; }
+            /// <summary>稳定的校准点方案代码，避免显示选项调整后历史索引发生错位。</summary>
+            public string? PointSelectionCode { get; set; }
             public int PointLayoutModeIndex { get; set; }
             public int LoadConditionIndex { get; set; }
             public int StabilityBasisIndex { get; set; } = 1;
@@ -456,6 +496,9 @@ namespace UpperComInspectionInstrument2022.Models
             public double? AmbientTemperature { get; set; }
             public double? AmbientHumidity { get; set; }
             public double? AmbientPressure { get; set; }
+            public double? FurnaceChamberLengthMm { get; set; }
+            public double? FurnaceChamberWidthMm { get; set; }
+            public double? FurnaceChamberHeightMm { get; set; }
             public double? WorkZoneLengthMm { get; set; }
             public double? WorkZoneWidthMm { get; set; }
             public double? WorkZoneHeightMm { get; set; }
@@ -474,6 +517,8 @@ namespace UpperComInspectionInstrument2022.Models
             public string? Verifier { get; set; }
             public DateTime CalibrationDate { get; set; }
             public bool EnvironmentInterferenceConfirmed { get; set; }
+            public string? ReferencedLaboratoryName { get; set; }
+            public string? ReferencedLaboratoryAddress { get; set; }
             public string? ReferencedStandardName { get; set; }
             public string? ReferencedCertificateNumber { get; set; }
             public DateTime? ReferencedValidityDate { get; set; }

@@ -372,3 +372,7 @@ FodyWeavers.xsd
 /tmp/pdfs/
 /tmp/spreadsheet-qa-*/
 /tmp/read-protocol.ps1
+/outputs/
+/tmp/precision-preview/
+/tmp/report-preview/
+/tmp/render-report-workbook.mjs

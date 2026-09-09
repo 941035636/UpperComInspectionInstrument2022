@@ -2,13 +2,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using UpperComInspectionInstrument2022.Models;
 using UpperComInspectionInstrument2022.Services;
 
 namespace UpperComInspectionInstrument2022.Views
 {
     /// <summary>
-    /// 当前校准结果页：从正式样本重新计算并按所选规范展示对应指标，同时提供 Excel、Word 和 PDF 报告入口。
+    /// 当前校准结果页：从正式样本重新计算并按所选规范展示对应指标，同时提供 Excel 原始记录和 Word 校准报告入口。
     /// </summary>
     public partial class ResultView : Page
     {
@@ -29,7 +30,6 @@ namespace UpperComInspectionInstrument2022.Views
                 : $"{CalibrationTaskContext.ReferencedStandardName} · {CalibrationTaskContext.ReferencedCertificateNumber} · 有效期 {CalibrationTaskContext.ReferencedValidityDate:yyyy-MM-dd}";
             OpenReportButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             GenerateWordCertificateButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
-            GeneratePdfArchiveButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             RefreshReportFilesStatus();
             ShowResults();
         }
@@ -38,9 +38,11 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>检查正式采样完成状态，执行规范计算并映射到结果卡片。</summary>
         private void ShowResults()
         {
+            Metric6Card.Visibility = Visibility.Visible;
             Metric6Value.Text = $"{CalibrationRunContext.Samples.Count} / {CalibrationTaskContext.PlannedCount} 组";
             if (!CalibrationTaskContext.HasCompletedCalibration)
             {
+                SetResultVisualState(ResultVisualState.Pending);
                 ResultStatusTextBlock.Text = "当前任务尚未完成正式采样";
                 ResultHintTextBlock.Text = "请返回校准工作台完成稳定确认和计划样本采集。";
                 return;
@@ -50,39 +52,63 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationResultSummary result = CalibrationResultCalculator.Calculate();
             if (!result.IsValid)
             {
+                SetResultVisualState(ResultVisualState.Error);
                 ResultStatusTextBlock.Text = "正式样本不能完成规范计算";
                 ResultHintTextBlock.Text = result.Message;
                 return;
             }
+            SetResultVisualState(ResultVisualState.Success);
             ResultStatusTextBlock.Text = "正式样本已按规范公式完成计算";
             ResultHintTextBlock.Text = "量值按规范公式计算，不确定度按附录示例的重复性、分辨力、证书修正值和稳定性等分量计算；表中参考技术指标不直接作为合格判据，出证前仍需核验原始记录和分量来源。";
-            ResultStatusTextBlock.Foreground = System.Windows.Media.Brushes.DarkGreen;
 
             if (CalibrationTaskContext.StandardIndex == 1)
             {
                 SetMetric(Metric1Label, Metric1Value, Metric1Hint, "炉温均匀度", FormatUpperLower(result.FurnaceUniformityUpper, result.FurnaceUniformityLower, "℃"), "各点实际温度相对中心监控点");
                 SetMetric(Metric2Label, Metric2Value, Metric2Hint, "炉温稳定度", FormatUpperLower(result.FurnaceStabilityUpper, result.FurnaceStabilityLower, "℃"), "中心点最大、最小值相对平均值");
                 SetMetric(Metric3Label, Metric3Value, Metric3Hint, "炉温偏差", FormatUpperLower(result.FurnaceDeviationUpper, result.FurnaceDeviationLower, "℃"), "最高、最低实际温度相对标称温度");
-                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "炉内最大温差", $"{result.FurnaceMaximumDifference:F2} ℃", "各测量周期最大温差中的最大值");
-                SetMetric(Metric5Label, Metric5Value, Metric5Hint, "炉温均匀度扩展不确定度", $"U+={result.FurnaceUniformityUpperUncertainty:F2} / U-={result.FurnaceUniformityLowerUncertainty:F2} ℃", $"k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}；重复性与装置修正值分量");
+                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "炉内最大温差", $"{result.FurnaceMaximumDifference:F3} ℃", "各测量周期最大温差中的最大值");
+                SetMetric(Metric5Label, Metric5Value, Metric5Hint, "炉温均匀度扩展不确定度", $"U+={result.FurnaceUniformityUpperUncertainty:F3} / U-={result.FurnaceUniformityLowerUncertainty:F3} ℃", $"k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}；重复性与装置修正值分量");
                 return;
             }
 
-            SetMetric(Metric1Label, Metric1Value, Metric1Hint, "温度偏差", FormatUpperLower(result.TemperatureUpperDeviation, result.TemperatureLowerDeviation, "℃"), $"扩展不确定度 U={result.TemperatureExpandedUncertainty:F2} ℃，k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}");
-            SetMetric(Metric2Label, Metric2Value, Metric2Hint, "温度均匀度", $"{result.TemperatureUniformity:F2} ℃", "各组最大与最小温差的算术平均");
-            SetMetric(Metric3Label, Metric3Value, Metric3Hint, "温度波动度", $"±{result.TemperatureFluctuation:F2} ℃", "各测点规定时间内极差一半的最大值");
+            SetMetric(Metric1Label, Metric1Value, Metric1Hint, "温度偏差", FormatUpperLower(result.TemperatureUpperDeviation, result.TemperatureLowerDeviation, "℃"), $"扩展不确定度 U={result.TemperatureExpandedUncertainty:F3} ℃，k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}");
+            SetMetric(Metric2Label, Metric2Value, Metric2Hint, "温度均匀度", $"{result.TemperatureUniformity:F3} ℃", "各组最大与最小温差的算术平均");
+            SetMetric(Metric3Label, Metric3Value, Metric3Hint, "温度波动度", $"±{result.TemperatureFluctuation:F3} ℃", "各测点规定时间内极差一半的最大值");
             if (CalibrationTaskContext.IncludesHumidity)
             {
-                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "相对湿度偏差", FormatUpperLower(result.HumidityUpperDeviation, result.HumidityLowerDeviation, "%RH"), $"扩展不确定度 U={result.HumidityExpandedUncertainty:F2} %RH，k={CalibrationTaskContext.ReferencedHumidityCoverage:0.###}");
-                SetMetric(Metric5Label, Metric5Value, Metric5Hint, "相对湿度均匀度", $"{result.HumidityUniformity:F2} %RH", "各组最大与最小湿度差的算术平均");
-                SetMetric(Metric6Label, Metric6Value, Metric6Hint, "相对湿度波动度", $"±{result.HumidityFluctuation:F2} %RH", "各湿度测点极差一半的最大值");
+                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "相对湿度偏差", FormatUpperLower(result.HumidityUpperDeviation, result.HumidityLowerDeviation, "%RH"), $"扩展不确定度 U={result.HumidityExpandedUncertainty:F3} %RH，k={CalibrationTaskContext.ReferencedHumidityCoverage:0.###}");
+                SetMetric(Metric5Label, Metric5Value, Metric5Hint, "相对湿度均匀度", $"{result.HumidityUniformity:F3} %RH", "各组最大与最小湿度差的算术平均");
+                SetMetric(Metric6Label, Metric6Value, Metric6Hint, "相对湿度波动度", $"±{result.HumidityFluctuation:F3} %RH", "各湿度测点极差一半的最大值");
             }
             else
             {
-                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "温度偏差扩展不确定度", $"U={result.TemperatureExpandedUncertainty:F2} ℃", $"k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}；重复性、分辨力、修正值和标准器稳定性");
+                SetMetric(Metric4Label, Metric4Value, Metric4Hint, "温度偏差扩展不确定度", $"U={result.TemperatureExpandedUncertainty:F3} ℃", $"k={CalibrationTaskContext.ReferencedTemperatureCoverage:0.###}；重复性、分辨力、修正值和标准器稳定性");
                 SetMetric(Metric5Label, Metric5Value, Metric5Hint, "正式样本", $"{CalibrationRunContext.Samples.Count} / {CalibrationTaskContext.PlannedCount} 组", "与快速实时趋势数据分离");
-                Metric6Card.Visibility = Visibility.Hidden;
+                Metric6Card.Visibility = Visibility.Collapsed;
             }
+        }
+
+        /// <summary>结果状态使用统一的待完成、错误和成功语义色，避免成功结果仍显示为警告色。</summary>
+        private void SetResultVisualState(ResultVisualState state)
+        {
+            (Color background, Color border, Color foreground) = state switch
+            {
+                ResultVisualState.Success => (Color.FromRgb(240, 253, 244), Color.FromRgb(187, 247, 208), Color.FromRgb(22, 101, 52)),
+                ResultVisualState.Error => (Color.FromRgb(254, 242, 242), Color.FromRgb(254, 202, 202), Color.FromRgb(153, 27, 27)),
+                _ => (Color.FromRgb(255, 247, 237), Color.FromRgb(254, 215, 170), Color.FromRgb(154, 52, 18))
+            };
+            ResultStatusPanel.Background = new SolidColorBrush(background);
+            ResultStatusPanel.BorderBrush = new SolidColorBrush(border);
+            ResultStatusTextBlock.Foreground = new SolidColorBrush(foreground);
+            ResultHintTextBlock.Foreground = new SolidColorBrush(foreground);
+        }
+
+        /// <summary>结果状态横幅的三种业务语义。</summary>
+        private enum ResultVisualState
+        {
+            Pending,
+            Error,
+            Success
         }
 
         /// <summary>统一设置一张结果卡片的名称、数值和口径说明。</summary>
@@ -100,9 +126,9 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>正值带加号，负值保留负号，零值不附加符号。</summary>
         private static string FormatSigned(double value) => value switch
         {
-            > 0 => $"+{value:F2}",
-            < 0 => $"{value:F2}",
-            _ => "0.00"
+            > 0 => $"+{value:F3}",
+            < 0 => $"{value:F3}",
+            _ => "0.000"
         };
 
         /// <summary>取得当前任务的规范代号。</summary>
@@ -123,6 +149,12 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 Excel 原始记录。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
+            string existingPath = Path.Combine(jobDirectory, "报告", "校准原始记录.xlsx");
+            if (File.Exists(existingPath))
+            {
+                OpenGeneratedFile(existingPath, "Excel 原始记录");
+                return;
+            }
             if (!CalibrationExcelReportService.Default.TryGenerate(jobDirectory, out string reportPath, out string error))
             {
                 WriteReportOperation("生成 Excel 原始记录", "失败", error, jobDirectory);
@@ -131,78 +163,60 @@ namespace UpperComInspectionInstrument2022.Views
             }
             WriteReportOperation("生成 Excel 原始记录", "成功", "已从冻结 CSV 生成", reportPath);
             RefreshReportFilesStatus();
-            try
-            {
-                Process.Start(new ProcessStartInfo(reportPath) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Excel 原始记录已生成，但无法调用系统默认办公软件打开：\n{reportPath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            OpenGeneratedFile(reportPath, "Excel 原始记录");
         }
 
-        /// <summary>从当前已完成作业的固化 CSV 生成 Word 校准证书并调用默认办公软件打开。</summary>
+        /// <summary>从当前已完成作业的固化 CSV 生成 Word 校准报告，或直接打开已有报告。</summary>
         private void GenerateWordCertificateButton_Click(object sender, RoutedEventArgs e)
         {
             string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
             if (string.IsNullOrWhiteSpace(jobDirectory))
             {
-                MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 Word 校准证书。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 Word 校准报告。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            string existingPath = Path.Combine(jobDirectory, "报告", "校准证书.docx");
+            if (File.Exists(existingPath))
+            {
+                OpenGeneratedFile(existingPath, "Word 校准报告");
                 return;
             }
             if (!CalibrationWordCertificateService.Default.TryGenerate(jobDirectory, out string certificatePath, out string error))
             {
-                WriteReportOperation("生成 Word 校准证书", "失败", error, jobDirectory);
-                MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                WriteReportOperation("生成 Word 校准报告", "失败", error, jobDirectory);
+                MessageBox.Show(error, "Word 校准报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
-            WriteReportOperation("生成 Word 校准证书", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
+            WriteReportOperation("生成 Word 校准报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
             RefreshReportFilesStatus();
-            try
-            {
-                Process.Start(new ProcessStartInfo(certificatePath) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Word 校准证书已生成，但无法调用系统默认办公软件打开：\n{certificatePath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            OpenGeneratedFile(certificatePath, "Word 校准报告");
+
+
         }
 
-        /// <summary>从当前已完成作业的冻结 CSV 生成 PDF 归档报告并调用系统默认阅读器打开。</summary>
-        private void GeneratePdfArchiveButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>用系统默认办公软件打开已生成报告，并统一处理本机文件关联异常。</summary>
+        private static void OpenGeneratedFile(string path, string displayName)
         {
-            string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
-            if (string.IsNullOrWhiteSpace(jobDirectory))
-            {
-                MessageBox.Show("当前会话没有可用的本地作业目录。请从“历史记录”选择已完成作业后生成 PDF 归档报告。", "找不到作业目录", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            if (!CalibrationPdfArchiveService.Default.TryGenerate(jobDirectory, out string archivePath, out string error))
-            {
-                WriteReportOperation("生成 PDF 归档报告", "失败", error, jobDirectory);
-                MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-            WriteReportOperation("生成 PDF 归档报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", archivePath);
-            RefreshReportFilesStatus();
             try
             {
-                Process.Start(new ProcessStartInfo(archivePath) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"PDF 归档报告已生成，但无法调用系统默认阅读器打开：\n{archivePath}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"{displayName}已生成，但无法调用系统默认程序打开：\n{path}\n\n{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
-        /// <summary>按当前作业目录中的实际文件刷新三类报告状态，不依赖内存标记。</summary>
+        /// <summary>按当前作业目录中的实际文件刷新 Excel 原始记录和 Word 校准报告状态。</summary>
         private void RefreshReportFilesStatus()
         {
             string? jobDirectory = CalibrationFileStorageService.Default.CurrentJobDirectory;
-            string Status(string fileName) => !string.IsNullOrWhiteSpace(jobDirectory) && File.Exists(Path.Combine(jobDirectory, "报告", fileName))
-                ? "已生成"
-                : "未生成";
-            ReportFilesStatusTextBlock.Text = $"报告状态：Excel {Status("校准原始记录.xlsx")} · Word {Status("校准证书.docx")} · PDF {Status("校准归档.pdf")}";
+            bool Exists(string fileName) => !string.IsNullOrWhiteSpace(jobDirectory) && File.Exists(Path.Combine(jobDirectory, "报告", fileName));
+            bool excelExists = Exists("校准原始记录.xlsx");
+            bool wordExists = Exists("校准证书.docx");
+            ReportFilesStatusTextBlock.Text = $"文件状态：原始记录 {(excelExists ? "已生成" : "未生成")} · 校准报告 {(wordExists ? "已生成" : "未生成")}";
+            OpenReportButton.Content = excelExists ? "打开原始记录 Excel" : "生成原始记录 Excel";
+            GenerateWordCertificateButton.Content = wordExists ? "打开校准报告 Word" : "生成校准报告 Word";
         }
 
         /// <summary>记录当前作业的报告生成结果，便于历史复核报告由谁在何时生成。</summary>

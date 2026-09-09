@@ -14,6 +14,8 @@ namespace UpperComInspectionInstrument2022.Models
             "IndustrialEquipmentCalibration",
             "system-settings.json");
 
+        public static string LaboratoryName { get; set; } = string.Empty;
+        public static string LaboratoryAddress { get; set; } = string.Empty;
         public static string StandardName { get; set; } = "温湿度巡检仪";
         public static string CertificateNumber { get; set; } = string.Empty;
         public static DateTime? ValidityDate { get; set; }
@@ -50,6 +52,8 @@ namespace UpperComInspectionInstrument2022.Models
                 if (!File.Exists(SettingsPath)) return;
                 SettingsSnapshot? snapshot = JsonSerializer.Deserialize<SettingsSnapshot>(File.ReadAllText(SettingsPath));
                 if (snapshot == null) return;
+                LaboratoryName = snapshot.LaboratoryName ?? string.Empty;
+                LaboratoryAddress = snapshot.LaboratoryAddress ?? string.Empty;
                 StandardName = snapshot.StandardName ?? StandardName;
                 CertificateNumber = snapshot.CertificateNumber ?? string.Empty;
                 ValidityDate = snapshot.ValidityDate;
@@ -86,6 +90,8 @@ namespace UpperComInspectionInstrument2022.Models
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
             SettingsSnapshot snapshot = new()
             {
+                LaboratoryName = LaboratoryName,
+                LaboratoryAddress = LaboratoryAddress,
                 StandardName = StandardName,
                 CertificateNumber = CertificateNumber,
                 ValidityDate = ValidityDate,
@@ -117,6 +123,8 @@ namespace UpperComInspectionInstrument2022.Models
         /// </summary>
         private sealed class SettingsSnapshot
         {
+            public string? LaboratoryName { get; set; }
+            public string? LaboratoryAddress { get; set; }
             public string? StandardName { get; set; }
             public string? CertificateNumber { get; set; }
             public DateTime? ValidityDate { get; set; }

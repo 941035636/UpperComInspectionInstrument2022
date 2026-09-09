@@ -17,6 +17,7 @@ namespace UpperComInspectionInstrument2022.Views
         {
             InitializeComponent();
             RefreshHistory();
+            UpdateActionState();
         }
 
         /// <summary>按当前关键字和下拉筛选条件重新加载历史记录。</summary>
@@ -28,6 +29,7 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>刷新表格数据源，并在有/无记录状态之间切换页面显示。</summary>
         private void RefreshHistory()
         {
+            string? selectedJobId = (HistoryDataGrid.SelectedItem as CalibrationArchiveSummary)?.JobId;
             string standard = GetFilterValue(StandardFilterComboBox, "全部规范");
             string status = GetFilterValue(StatusFilterComboBox, "全部状态");
             IReadOnlyList<CalibrationArchiveSummary> records = CalibrationFileStorageService.Default.LoadHistory(
@@ -38,6 +40,31 @@ namespace UpperComInspectionInstrument2022.Views
             bool hasRecords = records.Count > 0;
             HistoryDataGrid.Visibility = hasRecords ? Visibility.Visible : Visibility.Collapsed;
             EmptyStatePanel.Visibility = hasRecords ? Visibility.Collapsed : Visibility.Visible;
+            if (!string.IsNullOrWhiteSpace(selectedJobId))
+                HistoryDataGrid.SelectedItem = records.FirstOrDefault(record => record.JobId == selectedJobId);
+            UpdateActionState();
+        }
+
+        /// <summary>所选作业变化时，仅开放当前状态和本地文件确实支持的动作。</summary>
+        private void HistoryDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateActionState();
+
+        /// <summary>根据任务完成状态和文件存在情况更新工具栏，避免无选择或无文件时产生无效点击。</summary>
+        private void UpdateActionState()
+        {
+            CalibrationArchiveSummary? selected = HistoryDataGrid.SelectedItem as CalibrationArchiveSummary;
+            bool hasSelection = selected != null;
+            bool isCompleted = string.Equals(selected?.Status, "已完成", StringComparison.Ordinal);
+            bool canGenerate = isCompleted && Directory.Exists(selected!.DirectoryPath);
+
+            OpenSelectedJobButton.IsEnabled = hasSelection && Directory.Exists(selected!.DirectoryPath);
+            GenerateExcelReportButton.IsEnabled = canGenerate;
+            GenerateWordCertificateButton.IsEnabled = canGenerate;
+            GenerateExcelReportButton.Content = hasSelection && File.Exists(selected!.ExcelReportFilePath)
+                ? "打开原始记录 Excel"
+                : "生成原始记录 Excel";
+            GenerateWordCertificateButton.Content = hasSelection && File.Exists(selected!.WordCertificateFilePath)
+                ? "打开校准报告 Word"
+                : "生成校准报告 Word";
         }
 
         /// <summary>读取筛选下拉框；“全部”选项转换为空字符串表示不筛选。</summary>
@@ -55,18 +82,17 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>打开所选作业文件夹。</summary>
-        private void OpenSelectedJobButton_Click(object sender, RoutedEventArgs e) => OpenSelectedPath(openSample: false);
-
-        /// <summary>用系统默认办公软件打开所选作业的正式采样 CSV。</summary>
-        private void OpenSelectedSampleButton_Click(object sender, RoutedEventArgs e) => OpenSelectedPath(openSample: true);
-
-        /// <summary>打开所选作业的结果 CSV。</summary>
-        private void OpenSelectedResultButton_Click(object sender, RoutedEventArgs e) => OpenSelectedResult();
+        private void OpenSelectedJobButton_Click(object sender, RoutedEventArgs e) => OpenSelectedJobDirectory();
 
         /// <summary>为所选已完成作业生成或更新 Excel 原始记录。</summary>
         private void GenerateExcelReportButton_Click(object sender, RoutedEventArgs e)
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
+            if (File.Exists(selected.ExcelReportFilePath))
+            {
+                OpenPath(selected.ExcelReportFilePath);
+                return;
+            }
             if (!CalibrationExcelReportService.Default.TryGenerate(selected.DirectoryPath, out string reportPath, out string error))
             {
                 WriteReportOperation(selected, "生成 Excel 原始记录", "失败", error, selected.DirectoryPath);
@@ -78,74 +104,28 @@ namespace UpperComInspectionInstrument2022.Views
             OpenPath(reportPath);
         }
 
-        /// <summary>打开所选作业已经生成的 Excel 原始记录。</summary>
-        private void OpenExcelReportButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
-            if (!File.Exists(selected.ExcelReportFilePath))
-            {
-                MessageBox.Show("该作业尚未生成 Excel 原始记录，请先点击“生成/更新 Excel”。", "Excel 报告不存在", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            OpenPath(selected.ExcelReportFilePath);
-        }
-
-        /// <summary>为所选已完成作业生成或更新 Word 校准证书，并用默认办公软件打开。</summary>
+        /// <summary>为所选已完成作业生成 Word 校准报告，或直接打开已有报告。</summary>
         private void GenerateWordCertificateButton_Click(object sender, RoutedEventArgs e)
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
-            if (!CalibrationWordCertificateService.Default.TryGenerate(selected.DirectoryPath, out string certificatePath, out string error))
+            if (File.Exists(selected.WordCertificateFilePath))
             {
-                WriteReportOperation(selected, "生成 Word 校准证书", "失败", error, selected.DirectoryPath);
-                MessageBox.Show(error, "Word 校准证书生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                OpenPath(selected.WordCertificateFilePath);
                 return;
             }
-            WriteReportOperation(selected, "生成 Word 校准证书", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
+            if (!CalibrationWordCertificateService.Default.TryGenerate(selected.DirectoryPath, out string certificatePath, out string error))
+            {
+                WriteReportOperation(selected, "生成 Word 校准报告", "失败", error, selected.DirectoryPath);
+                MessageBox.Show(error, "Word 校准报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            WriteReportOperation(selected, "生成 Word 校准报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", certificatePath);
             RefreshHistory();
             OpenPath(certificatePath);
         }
 
-        /// <summary>为所选已完成作业生成或更新 PDF 归档报告，并用默认阅读器打开。</summary>
-        private void GeneratePdfArchiveButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
-            if (!CalibrationPdfArchiveService.Default.TryGenerate(selected.DirectoryPath, out string archivePath, out string error))
-            {
-                WriteReportOperation(selected, "生成 PDF 归档报告", "失败", error, selected.DirectoryPath);
-                MessageBox.Show(error, "PDF 归档报告生成失败", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-            WriteReportOperation(selected, "生成 PDF 归档报告", "成功", "已从冻结 CSV 生成，状态为待审核签发", archivePath);
-            RefreshHistory();
-            OpenPath(archivePath);
-        }
-
-        /// <summary>打开所选作业已经生成的 PDF 归档报告。</summary>
-        private void OpenPdfArchiveButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
-            if (!File.Exists(selected.PdfArchiveFilePath))
-            {
-                MessageBox.Show("该作业尚未生成 PDF 归档报告，请先点击“生成/更新 PDF”。", "PDF 报告不存在", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            OpenPath(selected.PdfArchiveFilePath);
-        }
-
         /// <summary>双击历史行时打开对应作业文件夹。</summary>
-        private void HistoryDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedPath(openSample: false);
-
-        /// <summary>检查结果文件是否存在，然后调用系统默认程序打开。</summary>
-        private void OpenSelectedResult()
-        {
-            if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
-            if (!File.Exists(selected.ResultFilePath))
-            {
-                MessageBox.Show("该作业尚未生成校准结果，可能仍在采样或已经中断。", "结果文件不存在", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            OpenPath(selected.ResultFilePath);
-        }
+        private void HistoryDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedJobDirectory();
 
         /// <summary>取得当前选中的历史作业；未选择时向用户给出提示。</summary>
         private bool TryGetSelectedArchive(out CalibrationArchiveSummary selected)
@@ -160,13 +140,13 @@ namespace UpperComInspectionInstrument2022.Views
             return false;
         }
 
-        /// <summary>按参数打开所选作业目录或正式采样文件，并处理文件被移动的情况。</summary>
-        private void OpenSelectedPath(bool openSample)
+        /// <summary>打开所选作业目录，并处理目录被移动的情况。</summary>
+        private void OpenSelectedJobDirectory()
         {
             if (!TryGetSelectedArchive(out CalibrationArchiveSummary? selected)) return;
 
-            string path = openSample ? selected.SampleFilePath : selected.DirectoryPath;
-            if (!Directory.Exists(path) && !File.Exists(path))
+            string path = selected.DirectoryPath;
+            if (!Directory.Exists(path))
             {
                 MessageBox.Show($"本地文件已被移动或删除：\n{path}", "无法打开", MessageBoxButton.OK, MessageBoxImage.Warning);
                 RefreshHistory();

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Net.WebSockets;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
@@ -10,6 +12,17 @@ using UpperComInspectionInstrument2022.Views;
 
 namespace UpperComInspectionInstrument2022
 {
+    /// <summary>主窗口顶部全局运行状态的视觉语义。</summary>
+    public enum GlobalRunStatusTone
+    {
+        Ready,
+        Connected,
+        Active,
+        Warning,
+        Error,
+        Completed
+    }
+
     /// <summary>
     /// 应用外壳只负责一级导航和共享服务生命周期。
     /// 校准作业内部按任务配置、实时采集、结果与报告顺序推进。
@@ -19,6 +32,11 @@ namespace UpperComInspectionInstrument2022
         private readonly ModbusRtuClient _modbusClient;
         private readonly InspectionDataAcquisitionService _acquisitionService;
         private RealTimeMeasurementPage? _realTimePage;
+        private bool _globalStatusReturnsToWorkbench;
+        private bool _logoutRequested;
+
+        /// <summary>用户点击注销并且主窗口已完成资源释放时触发。</summary>
+        public event EventHandler? LogoutRequested;
 
         /// <summary>
         /// 初始化全局设置、任务上下文、通信服务，并将用户带到任务配置页。
@@ -26,6 +44,7 @@ namespace UpperComInspectionInstrument2022
         public MainWindow()
         {
             InitializeComponent();
+            CurrentUserNameTextBlock.Text = UserSessionContext.Current?.DisplayName ?? "未登录";
             SystemSettingsContext.Load();
             CalibrationTaskContext.Load();
 
@@ -63,6 +82,10 @@ namespace UpperComInspectionInstrument2022
             SetStatus(recoveredJobs + recoveredRealtimeSessions > 0
                 ? $"系统启动完成；已标记 {recoveredJobs + recoveredRealtimeSessions} 个上次中断记录"
                 : "系统启动完成");
+            SetGlobalRunStatus(
+                recoveredJobs + recoveredRealtimeSessions > 0 ? "已恢复上次中断记录" : "系统就绪",
+                recoveredJobs + recoveredRealtimeSessions > 0 ? GlobalRunStatusTone.Warning : GlobalRunStatusTone.Ready,
+                false);
 
             if (recoveryErrors.Count > 0)
             {
@@ -72,6 +95,8 @@ namespace UpperComInspectionInstrument2022
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
+
+
             else if (recoveredJobs + recoveredRealtimeSessions > 0)
             {
                 MessageBox.Show(
@@ -172,6 +197,23 @@ namespace UpperComInspectionInstrument2022
         /// <summary>响应“系统设置”导航按钮。</summary>
         private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsPage();
 
+        /// <summary>注销会关闭当前业务窗口，因此会先停止采集、释放串口并保存中断状态。</summary>
+        private void LogoutButton_Click(object sender, RoutedEventArgs e)
+        {
+            string message = _acquisitionService.IsRunning
+                ? "当前正在采集。注销将停止采集，并把未完成的正式校准标记为中断。是否继续？"
+                : "确定要注销当前账户并返回登录页面吗？";
+            if (MessageBox.Show(message, "注销账户", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            string userName = UserSessionContext.Current?.UserName ?? string.Empty;
+            LocalTraceService.Default.TryWriteOperation(
+                "用户注销", "成功", userName,
+                "当前账户退出系统", CalibrationFileStorageService.Default.DataRootPath, out _);
+            _logoutRequested = true;
+            Close();
+        }
+
         // 保留隐藏入口的处理器，兼容旧 XAML 日志和页面跳转。
         /// <summary>兼容旧版首页入口，实际转到校准作业。</summary>
         private void HomeButton_Click(object sender, RoutedEventArgs e) => ShowCalibrationJobPage();
@@ -186,6 +228,36 @@ namespace UpperComInspectionInstrument2022
         private void SetStatus(string message)
         {
             BottomStatusTextBlock.Text = "状态：" + message;
+        }
+
+        /// <summary>
+        /// 更新始终可见的运行状态。采集或正式校准在后台继续时，用户可点击状态返回工作台。
+        /// </summary>
+        public void SetGlobalRunStatus(string message, GlobalRunStatusTone tone, bool returnsToWorkbench)
+        {
+            GlobalRunStatusTextBlock.Text = message;
+            _globalStatusReturnsToWorkbench = returnsToWorkbench;
+            GlobalRunStatusBorder.Cursor = returnsToWorkbench ? Cursors.Hand : Cursors.Arrow;
+            GlobalRunStatusBorder.ToolTip = returnsToWorkbench ? "点击返回正在运行的校准工作台" : message;
+
+            (Color background, Color indicator) = tone switch
+            {
+                GlobalRunStatusTone.Connected => (Color.FromRgb(30, 64, 175), Color.FromRgb(147, 197, 253)),
+                GlobalRunStatusTone.Active => (Color.FromRgb(7, 89, 133), Color.FromRgb(34, 211, 238)),
+                GlobalRunStatusTone.Warning => (Color.FromRgb(120, 53, 15), Color.FromRgb(251, 191, 36)),
+                GlobalRunStatusTone.Error => (Color.FromRgb(127, 29, 29), Color.FromRgb(248, 113, 113)),
+                GlobalRunStatusTone.Completed => (Color.FromRgb(20, 83, 45), Color.FromRgb(74, 222, 128)),
+                _ => (Color.FromRgb(15, 23, 42), Color.FromRgb(34, 197, 94))
+            };
+            GlobalRunStatusBorder.Background = new SolidColorBrush(background);
+            GlobalRunStatusEllipse.Fill = new SolidColorBrush(indicator);
+        }
+
+        /// <summary>后台采集状态可点击时返回复用的工作台页面。</summary>
+        private void GlobalRunStatusBorder_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_globalStatusReturnsToWorkbench)
+                ShowRealTimeMeasurementPage();
         }
 
         /// <summary>
@@ -210,7 +282,9 @@ namespace UpperComInspectionInstrument2022
                 // 应用关闭阶段不再向操作人员弹出异常。
             }
 
+            if (_logoutRequested) LogoutRequested?.Invoke(this, EventArgs.Empty);
             base.OnClosed(e);
         }
+
     }
 }

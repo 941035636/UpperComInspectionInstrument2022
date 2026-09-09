@@ -38,6 +38,25 @@
             <Setter Property="BorderBrush" Value="#CBD5E1"/>
             <Setter Property="Background" Value="#FFFFFF"/>
         </Style>
+        <Style TargetType="Button" x:Key="PrimaryActionButton">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#E2E8F0"/>
+                    <Setter Property="Foreground" Value="#64748B"/>
+                    <Setter Property="BorderBrush" Value="#CBD5E1"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="Cursor" Value="Arrow"/>
+                    <Setter Property="Opacity" Value="1"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="Button" x:Key="BlueActionButton" BasedOn="{StaticResource PrimaryActionButton}"><Setter Property="Background" Value="#2563EB"/></Style>
+        <Style TargetType="Button" x:Key="GreenActionButton" BasedOn="{StaticResource PrimaryActionButton}"><Setter Property="Background" Value="#047857"/><Setter Property="FontWeight" Value="Bold"/></Style>
+        <Style TargetType="Button" x:Key="DarkActionButton" BasedOn="{StaticResource PrimaryActionButton}"><Setter Property="Background" Value="#0F172A"/></Style>
     </Page.Resources>
 
     <Grid Background="#F1F5F9">
@@ -65,14 +84,14 @@
         <Grid Grid.Row="1" Margin="12,12,12,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="372"/>
+                <ColumnDefinition Width="338"/>
             </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions><RowDefinition Height="126"/><RowDefinition Height="1.15*"/><RowDefinition Height="1.55*"/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="112"/><RowDefinition Height="1.15*"/><RowDefinition Height="1.55*"/></Grid.RowDefinitions>
 
             <Border Grid.Column="0" Grid.Row="0" Background="#FFFFFF" CornerRadius="7" Padding="18,13" Margin="0,0,12,10" BorderBrush="#E2E8F0" BorderThickness="1">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="1.55*"/><ColumnDefinition Width="1.3*"/><ColumnDefinition Width="1.35*"/><ColumnDefinition Width="1.15*"/><ColumnDefinition Width="1.2*"/></Grid.ColumnDefinitions>
-                    <StackPanel><TextBlock Text="当前测量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="LiveValueSummaryTextBlock" Text="等待设备数据" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel><TextBlock Text="当前测量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="LiveValueSummaryTextBlock" Text="等待设备数据" FontSize="10.5" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
                     <StackPanel Grid.Column="1"><TextBlock Text="趋势预检" Style="{StaticResource CaptionText}"/><TextBlock x:Name="StabilityTextBlock" Text="未开始" FontSize="12" FontWeight="Bold" Foreground="#B45309" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
                     <StackPanel Grid.Column="2"><TextBlock Text="中心点" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CenterSummaryTextBlock" Text="点 1：- / -" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
                     <StackPanel Grid.Column="3"><TextBlock Text="数据质量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="QualitySummaryTextBlock" Text="任务通道 0/0" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,10,0" TextWrapping="Wrap"/></StackPanel>
@@ -108,7 +127,7 @@
                         <StackPanel Orientation="Horizontal"><TextBlock Text="测点数据矩阵" FontSize="17" FontWeight="Bold" Foreground="#0F172A"/><TextBlock Text="（每一行是一组完整采集）" Style="{StaticResource CaptionText}" Margin="8,4,0,0"/></StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBlock Text="采集序号" Foreground="#64748B"/><TextBlock x:Name="CurrentSequenceTextBlock" Text="-" FontWeight="Bold" Margin="6,0,0,0"/></StackPanel>
                     </Grid>
-                    <DataGrid Grid.Row="1" x:Name="MeasurementMatrixDataGrid" AutoGenerateColumns="True" IsReadOnly="True" CanUserAddRows="False" CanUserResizeRows="False" SelectionMode="Single" GridLinesVisibility="All" RowHeight="31" HeadersVisibility="All" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                    <DataGrid Grid.Row="1" x:Name="MeasurementMatrixDataGrid" AutoGenerateColumns="True" AutoGeneratingColumn="MeasurementMatrixDataGrid_AutoGeneratingColumn" IsReadOnly="True" CanUserAddRows="False" CanUserResizeRows="False" SelectionMode="Single" GridLinesVisibility="All" RowHeight="31" ColumnHeaderHeight="38" FrozenColumnCount="2" HeadersVisibility="All" AlternatingRowBackground="#F8FAFC" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
                 </Grid>
             </Border>
 
@@ -141,18 +160,17 @@
                             <StackPanel>
                                 <CheckBox x:Name="SaveRealtimeRecordCheckBox" Content="自动保存实时记录" IsChecked="True" FontWeight="SemiBold" Foreground="#166534"/>
                                 <DockPanel Margin="0,7,0,0">
-                                    <!-- <Button x:Name="OpenRealtimeRecordButton" DockPanel.Dock="Right" Content="打开目录" Click="OpenRealtimeRecordButton_Click" Style="{StaticResource SecondaryButton}" Padding="9,4" Margin="8,0,0,0"/>
-                                   <TextBlock x:Name="RealtimeRecordStatusTextBlock" Text="开始实时测量后，每次完整响应会立即写入本地" Foreground="#15803D" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
-                                -->
+                                    <Button x:Name="OpenRealtimeRecordButton" DockPanel.Dock="Right" Content="打开目录" Click="OpenRealtimeRecordButton_Click" Style="{StaticResource SecondaryButton}" Padding="9,4" Margin="8,0,0,0"/>
+                                    <TextBlock x:Name="RealtimeRecordStatusTextBlock" Text="开始测量后，每组完整响应立即写入本地" Foreground="#15803D" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
                                 </DockPanel>
                             </StackPanel>
                         </Border>
 
                         <TextBlock Text="执行控制" FontWeight="Bold" Foreground="#334155" Margin="0,14,0,7"/>
                         <Button x:Name="ConnectDeviceButton" Content="连接巡检仪" Height="36" Click="ConnectDeviceButton_Click" Style="{StaticResource SecondaryButton}"/>
-                        <Button x:Name="StartAcquisitionButton" Content="开始实时测量" Height="40" Margin="0,8,0,0" IsEnabled="False" Click="StartAcquisitionButton_Click" Background="#2563EB" Foreground="Black" BorderThickness="0" FontWeight="SemiBold"/>
-                        <Button x:Name="StartCalibrationButton" Content="启动校准采样" Height="44" Margin="0,8,0,0" IsEnabled="False" Click="StartCalibrationButton_Click" Background="#059669" Foreground="Black" BorderThickness="0" FontWeight="Bold"/>
-                        <Button x:Name="ViewResultButton" Content="查看结果与报告" Height="38" Margin="0,8,0,0" IsEnabled="False" Click="ViewResultButton_Click" Background="#0F172A" Foreground="Black" BorderThickness="0" FontWeight="SemiBold"/>
+                        <Button x:Name="StartAcquisitionButton" Content="开始实时测量" Height="40" Margin="0,8,0,0" IsEnabled="False" Click="StartAcquisitionButton_Click" Style="{StaticResource BlueActionButton}"/>
+                        <Button x:Name="StartCalibrationButton" Content="启动校准采样" Height="44" Margin="0,8,0,0" IsEnabled="False" Click="StartCalibrationButton_Click" Style="{StaticResource GreenActionButton}"/>
+                        <Button x:Name="ViewResultButton" Content="查看结果与报告" Height="38" Margin="0,8,0,0" IsEnabled="False" Click="ViewResultButton_Click" Style="{StaticResource DarkActionButton}"/>
                         <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button x:Name="StopAcquisitionButton" Content="暂停" Height="34" IsEnabled="False" Click="StopAcquisitionButton_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,4,0"/><Button x:Name="ClearDataButton" Grid.Column="1" Content="清空数据" Height="34" Click="ClearDataButton_Click" Style="{StaticResource SecondaryButton}" Margin="4,0,0,0"/></Grid>
 
                         <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" Padding="12" Margin="0,14,0,0">

@@ -21,6 +21,16 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>校验所有数值与通道修正格式，通过后保存到本地系统设置文件。</summary>
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
+            if (!TryReadRequiredText(LaboratoryNameTextBox, "实验室名称") ||
+                !TryReadRequiredText(LaboratoryAddressTextBox, "实验室地址") ||
+                !TryReadRequiredText(StandardNameTextBox, "标准器名称") ||
+                !TryReadRequiredText(CertificateNumberTextBox, "标准器证书编号")) return;
+            if (!ValidityDatePicker.SelectedDate.HasValue)
+            {
+                MessageBox.Show("请选择标准器证书有效期。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ValidityDatePicker.Focus();
+                return;
+            }
             if (!TryReadPositiveDouble(TemperatureResolutionTextBox, "温度分辨力", out double temperatureResolution) ||
                 !TryReadPositiveDouble(HumidityResolutionTextBox, "湿度分辨力", out double humidityResolution) ||
                 !TryReadPositiveDouble(MeasuringInstrumentClassTextBox, "测温仪器级别", out double instrumentClass) ||
@@ -43,6 +53,8 @@ namespace UpperComInspectionInstrument2022.Views
                 return;
             }
 
+            SystemSettingsContext.LaboratoryName = LaboratoryNameTextBox.Text.Trim();
+            SystemSettingsContext.LaboratoryAddress = LaboratoryAddressTextBox.Text.Trim();
             SystemSettingsContext.StandardName = StandardNameTextBox.Text.Trim();
             SystemSettingsContext.CertificateNumber = CertificateNumberTextBox.Text.Trim();
             SystemSettingsContext.ValidityDate = ValidityDatePicker.SelectedDate;
@@ -73,6 +85,8 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>把当前系统上下文逐项显示到输入控件。</summary>
         private void LoadSettings()
         {
+            LaboratoryNameTextBox.Text = SystemSettingsContext.LaboratoryName;
+            LaboratoryAddressTextBox.Text = SystemSettingsContext.LaboratoryAddress;
             StandardNameTextBox.Text = SystemSettingsContext.StandardName;
             CertificateNumberTextBox.Text = SystemSettingsContext.CertificateNumber;
             ValidityDatePicker.SelectedDate = SystemSettingsContext.ValidityDate;
@@ -95,6 +109,15 @@ namespace UpperComInspectionInstrument2022.Views
             TemperatureCoverageTextBox.Text = SystemSettingsContext.TemperatureCoverage.ToString("0.###");
             HumidityUncertaintyTextBox.Text = SystemSettingsContext.HumidityUncertainty.ToString("0.###");
             HumidityCoverageTextBox.Text = SystemSettingsContext.HumidityCoverage.ToString("0.###");
+        }
+
+        /// <summary>检查校准报告和标准器追溯所需的短文本字段。</summary>
+        private static bool TryReadRequiredText(TextBox textBox, string name)
+        {
+            if (!string.IsNullOrWhiteSpace(textBox.Text)) return true;
+            MessageBox.Show($"{name}不能为空。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
+            textBox.Focus();
+            return false;
         }
 
         /// <summary>读取必须大于 0 的有限数；失败时提示并聚焦对应输入框。</summary>

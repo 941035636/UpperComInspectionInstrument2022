@@ -91,7 +91,6 @@ namespace UpperComInspectionInstrument2022.Services
                 CalibrationPointOptions = new[]
                 {
                     "用户常用温湿度点（当前工况）",
-                    "使用范围下限/上限/中间点（逐工况）",
                     "客户指定校准点（当前工况）"
                 },
                 CalibrationPointRuleTexts = new[]
@@ -99,7 +98,6 @@ namespace UpperComInspectionInstrument2022.Services
                     includesHumidity
                         ? "按用户实际需要选择常用温度、湿度点；当前执行引擎一次采集一个温湿度工况。"
                         : "按用户实际需要选择常用温度点；当前执行引擎一次采集一个温度工况。",
-                    "规范方案包含使用范围下限、上限和中间点；当前任务按其中一个设定值执行，三个工况需分别完成。",
                     "按客户指定值建立当前校准工况，并在偏离/自定义说明中记录依据。"
                 },
                 PointLayoutModeOptions = new[]
@@ -158,13 +156,11 @@ namespace UpperComInspectionInstrument2022.Services
                 CalibrationPointOptions = new[]
                 {
                     "实际常用温度（当前工况）",
-                    "最低和最高工作温度（逐工况）",
                     "客户指定温度（当前工况）"
                 },
                 CalibrationPointRuleTexts = new[]
                 {
                     "根据客户要求选择箱式炉实际常用温度；当前执行引擎一次采集一个温度工况。",
-                    "规范方案包含箱式炉最低和最高工作温度；当前任务按其中一个设定值执行，两个工况需分别完成。",
                     "按客户指定温度建立当前校准工况，并在偏离/自定义说明中记录依据。"
                 },
                 PointLayoutModeOptions = new[]

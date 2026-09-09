@@ -8,7 +8,7 @@
             <StackPanel><TextBlock Text="结果与报告" FontSize="27" FontWeight="Bold" Foreground="#0F172A"/><TextBlock Text="步骤 3/3 · 查看结果判定并生成当前任务记录与报告" Margin="0,6,0,0" Foreground="#64748B"/></StackPanel>
         </Border>
 
-        <Border Grid.Row="1" Margin="28,18,28,0" Padding="16" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" CornerRadius="7">
+        <Border x:Name="ResultStatusPanel" Grid.Row="1" Margin="28,18,28,0" Padding="16" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" CornerRadius="7">
             <StackPanel><TextBlock x:Name="ResultStatusTextBlock" Text="当前任务尚未完成采样" FontSize="17" FontWeight="SemiBold" Foreground="#9A3412"/><TextBlock x:Name="ResultHintTextBlock" Text="请先返回校准工作台完成稳定观察和计划采样。" Margin="0,6,0,0" Foreground="#9A3412" TextWrapping="Wrap"/></StackPanel>
         </Border>
 
@@ -31,16 +31,15 @@
         </UniformGrid>
 
         <Border Grid.Row="4" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="28,12" Margin="0,18,0,0">
-            <DockPanel>
+            <DockPanel LastChildFill="False">
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Excel、Word 与 PDF 均从本次作业的冻结 CSV 生成，可在历史记录中重复生成。" Foreground="#64748B"/>
-                    <TextBlock x:Name="ReportFilesStatusTextBlock" Text="报告状态：Excel 未生成 · Word 未生成 · PDF 未生成" Margin="0,4,0,0" Foreground="#334155" FontWeight="SemiBold"/>
+                    <TextBlock Text="原始记录使用 Excel，校准报告使用 Word；两者均从本次作业的冻结数据生成。" Foreground="#64748B"/>
+                    <TextBlock x:Name="ReportFilesStatusTextBlock" Text="文件状态：原始记录未生成 · 校准报告未生成" Margin="0,4,0,0" Foreground="#334155" FontWeight="SemiBold"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button Content="返回校准工作台" Click="BackCalibrationButton_Click" Padding="20,9" Margin="0,0,10,0"/>
-                    <Button x:Name="OpenReportButton" Content="生成 Excel 原始记录" Click="OpenReportButton_Click" Padding="20,9" Margin="0,0,10,0"/>
-                    <Button x:Name="GenerateWordCertificateButton" Content="生成 Word 证书" Click="GenerateWordCertificateButton_Click" Padding="20,9" Margin="0,0,10,0"/>
-                    <Button x:Name="GeneratePdfArchiveButton" Content="生成 PDF 归档" Click="GeneratePdfArchiveButton_Click" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+                    <Button x:Name="OpenReportButton" Content="生成原始记录 Excel" Click="OpenReportButton_Click" MinWidth="170" Padding="20,9" Margin="0,0,10,0"/>
+                    <Button x:Name="GenerateWordCertificateButton" Content="生成校准报告 Word" Click="GenerateWordCertificateButton_Click" MinWidth="170" Padding="20,9" Background="#2563EB" Foreground="White" BorderThickness="0"/>
                 </StackPanel>
             </DockPanel>
         </Border>

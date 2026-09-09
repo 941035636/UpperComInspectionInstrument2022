@@ -71,7 +71,7 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateConnectionStatus();
             ViewResultButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             UpdateFormalConditionControls();
-            //UpdateRealtimeRecordStatus();
+            UpdateRealtimeRecordStatus();
             _appliedTaskSignature = BuildTaskSignature();
 
 
@@ -125,7 +125,7 @@ namespace UpperComInspectionInstrument2022.Views
             if (_acquisitionService.IsRunning)
             {
                 SaveRealtimeRecordCheckBox.IsEnabled = false;
-                //UpdateRealtimeRecordStatus();
+                UpdateRealtimeRecordStatus();
                 return;
             }
 
@@ -143,7 +143,7 @@ namespace UpperComInspectionInstrument2022.Views
             }
             _appliedTaskSignature = newSignature;
             SaveRealtimeRecordCheckBox.IsEnabled = true;
-            //UpdateRealtimeRecordStatus();
+            UpdateRealtimeRecordStatus();
         }
 
         /// <summary>生成影响工作台矩阵和采集解析的任务签名，用于判断是否必须清空旧实时数据。</summary>
@@ -421,6 +421,50 @@ namespace UpperComInspectionInstrument2022.Views
             return int.TryParse(comboBox.SelectedItem as string, out int count) ? Math.Max(0, count) : 0;
         }
 
+        /// <summary>为自动生成的矩阵列补充单位，并明确标出中心点或湿度 O 点。</summary>
+        private void MeasurementMatrixDataGrid_AutoGeneratingColumn(object sender, DataGridAutoGeneratingColumnEventArgs e)
+        {
+            if (e.PropertyName == "采集序号")
+            {
+                e.Column.Width = new DataGridLength(74);
+                return;
+            }
+            if (e.PropertyName == "采集时间")
+            {
+                e.Column.Width = new DataGridLength(106);
+                return;
+            }
+
+            int temperatureCenter = CalibrationTaskContext.IsConfigured
+                ? CalibrationTaskContext.TemperatureCenterPoint
+                : int.TryParse(CenterPointComboBox.SelectedItem as string, out int center) ? center : 1;
+            int humidityCenter = CalibrationTaskContext.IsConfigured
+                ? Math.Max(1, CalibrationTaskContext.HumidityCenterPoint)
+                : temperatureCenter;
+            if (TryReadChannelNumber(e.PropertyName, "温度", out int temperatureChannel))
+            {
+                e.Column.Header = temperatureChannel == temperatureCenter
+                    ? $"T{temperatureChannel} 中心 (℃)"
+                    : $"T{temperatureChannel} (℃)";
+                e.Column.Width = new DataGridLength(temperatureChannel == temperatureCenter ? 98 : 76);
+            }
+            else if (TryReadChannelNumber(e.PropertyName, "湿度", out int humidityChannel))
+            {
+                e.Column.Header = humidityChannel == humidityCenter
+                    ? $"H{humidityChannel} / O点 (%RH)"
+                    : $"H{humidityChannel} (%RH)";
+                e.Column.Width = new DataGridLength(humidityChannel == humidityCenter ? 116 : 92);
+            }
+        }
+
+        /// <summary>从“温度5”或“湿度3”等内部列名中读取通道号。</summary>
+        private static bool TryReadChannelNumber(string propertyName, string prefix, out int channel)
+        {
+            channel = 0;
+            return propertyName.StartsWith(prefix, StringComparison.Ordinal) &&
+                   int.TryParse(propertyName[prefix.Length..], out channel);
+        }
+
 
         /// <summary>把最新快照按温度点、湿度点顺序插入矩阵首行，最多保留 200 行。</summary>
         private void AppendMeasurementMatrixRow(MeasurementSnapshot snapshot)
@@ -428,7 +472,7 @@ namespace UpperComInspectionInstrument2022.Views
             if (_measurementTable.Columns.Count < 3) return;
             DataRow row = _measurementTable.NewRow();
             row["采集序号"] = snapshot.Sequence;
-            row["采集时间"] = snapshot.Timestamp.ToString("HH:mm:ss.fff");
+            row["采集时间"] = snapshot.Timestamp.ToString("HH:mm:ss");
             foreach (DataColumn column in _measurementTable.Columns)
             {
                 if (column.ColumnName == "采集序号" || column.ColumnName == "采集时间") continue;
@@ -556,7 +600,7 @@ namespace UpperComInspectionInstrument2022.Views
                 StabilityTextBlock.Foreground = Brushes.DarkOrange;
                 StatusTextBlock.Text = "实时测量中，等待稳定条件确认";
                 UpdateConnectionStatus();
-                //UpdateRealtimeRecordStatus();
+                UpdateRealtimeRecordStatus();
                 EvaluateFormalReadiness();
                 string sessionDirectory = _realtimeStorageService.CurrentSessionDirectory ?? string.Empty;
                 WriteOperation("开始实时测量", "成功", $"{portName} / 从站 {slaveAddress} / 周期 {interval} ms / {calibrationType}", sessionDirectory);
@@ -567,7 +611,7 @@ namespace UpperComInspectionInstrument2022.Views
                 if (realtimeSessionStarted)
                     _realtimeStorageService.TryEndSession("启动失败", ex.Message, out _);
                 SaveRealtimeRecordCheckBox.IsEnabled = true;
-                //UpdateRealtimeRecordStatus(ex.Message);
+                UpdateRealtimeRecordStatus(ex.Message);
                 UpdateConnectionStatus();
                 WriteOperation("开始实时测量", "失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
                 WriteRuntime("错误", "采集", "启动实时测量失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
@@ -635,6 +679,7 @@ namespace UpperComInspectionInstrument2022.Views
             ViewResultButton.IsEnabled = false;
             FormalSampleProgressTextBlock.Text = $"正式样本 0 / {CalibrationTaskContext.PlannedCount}";
             StatusTextBlock.Text = $"正式校准已启动；实时测量保持运行，按 {CalibrationTaskContext.SamplingIntervalSeconds} s 间隔留存样本";
+            PublishGlobalRunStatus($"{_modbusClient.PortName} · 正式采样 0/{CalibrationTaskContext.PlannedCount}", GlobalRunStatusTone.Active);
             UpdateParameterVisibility();
             WriteOperation(
                 "启动正式校准采样",
@@ -684,6 +729,7 @@ namespace UpperComInspectionInstrument2022.Views
             StartAcquisitionButton.IsEnabled = false;
             ConnectDeviceButton.IsEnabled = false;
             StatusTextBlock.Text = "正在暂停，等待当前巡检仪请求结束…";
+            PublishGlobalRunStatus("正在安全停止巡检仪请求…", GlobalRunStatusTone.Warning);
             string storageWarning = string.Empty;
             string realtimeStorageWarning = string.Empty;
             bool interruptedFormalCalibration = _calibrationRunning;
@@ -725,7 +771,7 @@ namespace UpperComInspectionInstrument2022.Views
             bool stopHasWarning = !string.IsNullOrWhiteSpace(storageWarning) || !string.IsNullOrWhiteSpace(realtimeStorageWarning);
             WriteOperation("暂停实时测量", stopHasWarning ? "警告" : "成功", stopDescription, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
             WriteRuntime(stopHasWarning ? "警告" : "信息", "采集", "暂停实时测量", stopDescription, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
-            //UpdateRealtimeRecordStatus(realtimeStorageWarning);
+            UpdateRealtimeRecordStatus(realtimeStorageWarning);
             if (!string.IsNullOrWhiteSpace(storageWarning))
                 MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             if (!string.IsNullOrWhiteSpace(realtimeStorageWarning))
@@ -825,12 +871,12 @@ namespace UpperComInspectionInstrument2022.Views
                 {
                     if (!_realtimeStorageService.TryAppendSnapshot(snapshot, out string realtimeStorageError))
                     {
-                        //UpdateRealtimeRecordStatus(realtimeStorageError);
+                        UpdateRealtimeRecordStatus(realtimeStorageError);
                         MessageBox.Show(realtimeStorageError, "实时记录保存失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                     else
                     {
-                        //UpdateRealtimeRecordStatus();
+                        UpdateRealtimeRecordStatus();
                     }
                 }
 
@@ -877,6 +923,7 @@ namespace UpperComInspectionInstrument2022.Views
                     {
                         FormalSampleProgressTextBlock.Text = $"正式样本 {_calibrationSampleCount} / {plannedCount}";
                         StatusTextBlock.Text = $"正式校准采样：{_calibrationSampleCount} / {plannedCount} 组；下一组间隔 {intervalSeconds} s";
+                        PublishGlobalRunStatus($"{_modbusClient.PortName} · 正式采样 {_calibrationSampleCount}/{plannedCount}", GlobalRunStatusTone.Active);
                         if (_calibrationSampleCount >= plannedCount)
                         {
                             // 计划样本完成后执行“计算→结果落盘→任务完成标记”，任何一步失败都不宣称完成。
@@ -896,6 +943,7 @@ namespace UpperComInspectionInstrument2022.Views
                                 FormalReadinessTextBlock.Text = completionError;
                                 FormalReadinessTextBlock.Foreground = Brushes.DarkRed;
                                 StatusTextBlock.Text = "正式样本已采满，但结果计算或本地归档失败";
+                                PublishGlobalRunStatus("校准结果归档失败", GlobalRunStatusTone.Error);
                                 MessageBox.Show(FormalReadinessTextBlock.Text, "校准作业未完成", MessageBoxButton.OK, MessageBoxImage.Error);
                             }
                             else
@@ -909,6 +957,7 @@ namespace UpperComInspectionInstrument2022.Views
                                 FormalReadinessTextBlock.Text = "正式校准采样、结果计算和本地归档均已完成。";
                                 FormalReadinessTextBlock.Foreground = Brushes.DarkGreen;
                                 StatusTextBlock.Text = $"校准作业已保存：{CalibrationFileStorageService.Default.CurrentJobDirectory}";
+                                PublishGlobalRunStatus("校准完成 · 实时测量仍在运行", GlobalRunStatusTone.Completed);
                             }
                             UpdateParameterVisibility();
                         }
@@ -918,10 +967,12 @@ namespace UpperComInspectionInstrument2022.Views
                 {
                     int remainingSeconds = Math.Max(0, (int)Math.Ceiling((_nextCalibrationSampleAt - DateTime.Now).TotalSeconds));
                     StatusTextBlock.Text = $"正式校准采样：{_calibrationSampleCount} / {CalibrationTaskContext.PlannedCount} 组；下一组约 {remainingSeconds} s";
+                    PublishGlobalRunStatus($"{_modbusClient.PortName} · 正式采样 {_calibrationSampleCount}/{CalibrationTaskContext.PlannedCount} · {remainingSeconds}s", GlobalRunStatusTone.Active);
                 }
                 else
                 {
                     StatusTextBlock.Text = $"实时测量中，已采集 {_viewModel.AcquisitionCount} 组";
+                    PublishGlobalRunStatus($"{_modbusClient.PortName} · 实时测量 {_viewModel.AcquisitionCount} 组", GlobalRunStatusTone.Active);
                 }
             });
         }
@@ -930,7 +981,7 @@ namespace UpperComInspectionInstrument2022.Views
         private void UpdateMeasurementSummary(MeasurementSnapshot snapshot)
         {
             CurrentSequenceTextBlock.Text = snapshot.Sequence.ToString();
-            CurrentTimeTextBlock.Text = snapshot.Timestamp.ToString("HH:mm:ss.fff");
+            CurrentTimeTextBlock.Text = snapshot.Timestamp.ToString("HH:mm:ss");
             int temperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0;
             int humidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0;
             List<InspectionChannelData> required = MeasurementChannelSelectionService.SelectRequired(
@@ -1092,6 +1143,9 @@ namespace UpperComInspectionInstrument2022.Views
             return int.TryParse(CalibrationCountComboBox.SelectedItem as string, out count);
         }
 
+
+
+
         /// <summary>重绘最近 60 组温度、湿度空间平均趋势及当前数值范围。</summary>
         private void DrawMeasurementChart()
         {
@@ -1200,6 +1254,7 @@ namespace UpperComInspectionInstrument2022.Views
                     StabilityTextBlock.Text = $"通信波动，正在重试（{failureCount}/{_acquisitionService.MaxConsecutiveFailures}）";
                     StabilityTextBlock.Foreground = Brushes.DarkOrange;
                     StatusTextBlock.Text = $"巡检仪本轮读取失败，{retryDelay / 1000.0:0.#} s 后自动重试：{ex.Message}";
+                    PublishGlobalRunStatus($"通信波动 · {retryDelay / 1000.0:0.#}s 后重试", GlobalRunStatusTone.Warning);
                 });
                 return;
             }
@@ -1225,9 +1280,10 @@ namespace UpperComInspectionInstrument2022.Views
                 BaudRateComboBox.IsEnabled = true;
                 SetExecutionParametersEnabled(true);
                 UpdateConnectionStatus();
-                //UpdateRealtimeRecordStatus(ex.Message);
+                UpdateRealtimeRecordStatus(ex.Message);
                 EvaluateFormalReadiness();
                 StatusTextBlock.Text = $"连续 {failureCount} 次读取失败，已停止并释放串口";
+                PublishGlobalRunStatus("通信异常，已停止并释放串口", GlobalRunStatusTone.Error, false);
                 MessageBox.Show(
                     $"巡检仪连续 {failureCount} 次读取失败，系统已停止请求以保护设备。\n\n最后一次错误：{ex.Message}\n\n请检查接线、电源、从站地址后重新连接。",
                     "采集已安全停止",
@@ -1300,9 +1356,25 @@ namespace UpperComInspectionInstrument2022.Views
             PortTextBlock.Text = connected ? $"串口：{_modbusClient.PortName}" : "串口：未连接";
             BaudRateTextBlock.Text = connected ? $"波特率：{_modbusClient.BaudRate}" : "波特率：未设置";
             ConnectDeviceButton.Content = connected ? "断开巡检仪" : "连接巡检仪";
+            if (_calibrationRunning)
+                PublishGlobalRunStatus($"{_modbusClient.PortName} · 正式采样 {_calibrationSampleCount}/{CalibrationTaskContext.PlannedCount}", GlobalRunStatusTone.Active);
+            else if (_viewModel.IsAcquiring && CalibrationTaskContext.HasCompletedCalibration)
+                PublishGlobalRunStatus("校准完成 · 实时测量仍在运行", GlobalRunStatusTone.Completed);
+            else if (_viewModel.IsAcquiring)
+                PublishGlobalRunStatus($"{_modbusClient.PortName} · 实时测量中", GlobalRunStatusTone.Active);
+            else if (connected && _deviceResponding)
+                PublishGlobalRunStatus($"{_modbusClient.PortName} · 设备已响应", GlobalRunStatusTone.Connected);
+            else if (connected)
+                PublishGlobalRunStatus($"{_modbusClient.PortName} · 串口已打开", GlobalRunStatusTone.Connected);
+            else
+                PublishGlobalRunStatus("巡检仪未连接", GlobalRunStatusTone.Warning, false);
+        }
 
-            //ConnectDeviceButton.Content = !connected ? "断开" : "连接";
-
+        /// <summary>把设备与作业状态发布到主窗口，使切换页面后仍能看到后台采集进度。</summary>
+        private static void PublishGlobalRunStatus(string message, GlobalRunStatusTone tone, bool returnsToWorkbench = true)
+        {
+            if (Application.Current.MainWindow is MainWindow mainWindow)
+                mainWindow.SetGlobalRunStatus(message, tone, returnsToWorkbench);
         }
 
         /// <summary>打开当前或最近一次实时测量会话目录；尚未测量时打开实时记录根目录。</summary>
@@ -1325,38 +1397,38 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>以短状态提示记录是否正在写盘，完整路径放在悬停提示中，避免挤占控制栏。</summary>
-        //private void UpdateRealtimeRecordStatus(string? warning = null)
-        //{
-        //    string? directory = _realtimeStorageService.CurrentSessionDirectory;
-        //    //RealtimeRecordStatusTextBlock.ToolTip = directory ?? _realtimeStorageService.DataRootPath;
+        private void UpdateRealtimeRecordStatus(string? warning = null)
+        {
+            string? directory = _realtimeStorageService.CurrentSessionDirectory;
+            RealtimeRecordStatusTextBlock.ToolTip = directory ?? _realtimeStorageService.DataRootPath;
 
-        //    if (!string.IsNullOrWhiteSpace(warning))
-        //    {
-        //        RealtimeRecordStatusTextBlock.Text = "实时记录异常：" + warning.Split('\n')[0];
-        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkRed;
-        //        return;
-        //    }
-        //    if (_realtimeStorageService.IsActive)
-        //    {
-        //        RealtimeRecordStatusTextBlock.Text = $"实时记录中：已写入 {_realtimeStorageService.SavedSnapshotCount} 组";
-        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
-        //        return;
-        //    }
-        //    if (_acquisitionService.IsRunning && SaveRealtimeRecordCheckBox.IsChecked != true)
-        //    {
-        //        RealtimeRecordStatusTextBlock.Text = "本次实时测量未启用文件记录";
-        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkOrange;
-        //        return;
-        //    }
-        //    if (!string.IsNullOrWhiteSpace(directory))
-        //    {
-        //        RealtimeRecordStatusTextBlock.Text = $"最近实时记录：{_realtimeStorageService.SavedSnapshotCount} 组";
-        //        RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
-        //        return;
-        //    }
+            if (!string.IsNullOrWhiteSpace(warning))
+            {
+                RealtimeRecordStatusTextBlock.Text = "实时记录异常：" + warning.Split('\n')[0];
+                RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkRed;
+                return;
+            }
+            if (_realtimeStorageService.IsActive)
+            {
+                RealtimeRecordStatusTextBlock.Text = $"实时记录中：已写入 {_realtimeStorageService.SavedSnapshotCount} 组";
+                RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+                return;
+            }
+            if (_acquisitionService.IsRunning && SaveRealtimeRecordCheckBox.IsChecked != true)
+            {
+                RealtimeRecordStatusTextBlock.Text = "本次实时测量未启用文件记录";
+                RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkOrange;
+                return;
+            }
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                RealtimeRecordStatusTextBlock.Text = $"最近实时记录：{_realtimeStorageService.SavedSnapshotCount} 组";
+                RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+                return;
+            }
 
-        //    RealtimeRecordStatusTextBlock.Text = "开始实时测量后，每次完整响应立即写盘";
-        //    RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
-        //}
+            RealtimeRecordStatusTextBlock.Text = "开始测量后，每组完整响应立即写入本地";
+            RealtimeRecordStatusTextBlock.Foreground = Brushes.DarkGreen;
+        }
     }
 }

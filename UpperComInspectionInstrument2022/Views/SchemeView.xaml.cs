@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -32,7 +31,7 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTypeComboBox.SelectedIndex = StandardComboBox.SelectedIndex == 1
                 ? 0
                 : Math.Clamp(CalibrationTaskContext.CalibrationTypeIndex, 0, 1);
-            PointSelectionComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.PointSelectionIndex, 0, 2);
+            PointSelectionComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.PointSelectionIndex, 0, 1);
             PointLayoutModeComboBox.SelectedIndex = Math.Clamp(
                 CalibrationTaskContext.PointLayoutModeIndex, 0, Math.Max(0, PointLayoutModeComboBox.Items.Count - 1));
             LoadConditionComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.LoadConditionIndex, 0, 1);
@@ -65,6 +64,9 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationDatePicker.SelectedDate = CalibrationTaskContext.CalibrationDate;
             CalibratorTextBox.Text = CalibrationTaskContext.Calibrator;
             VerifierTextBox.Text = CalibrationTaskContext.Verifier;
+            FurnaceChamberLengthTextBox.Text = FormatOptional(CalibrationTaskContext.FurnaceChamberLengthMm);
+            FurnaceChamberWidthTextBox.Text = FormatOptional(CalibrationTaskContext.FurnaceChamberWidthMm);
+            FurnaceChamberHeightTextBox.Text = FormatOptional(CalibrationTaskContext.FurnaceChamberHeightMm);
             WorkZoneLengthTextBox.Text = FormatOptional(CalibrationTaskContext.WorkZoneLengthMm);
             WorkZoneWidthTextBox.Text = FormatOptional(CalibrationTaskContext.WorkZoneWidthMm);
             WorkZoneHeightTextBox.Text = FormatOptional(CalibrationTaskContext.WorkZoneHeightMm);
@@ -168,12 +170,6 @@ namespace UpperComInspectionInstrument2022.Views
             if (!_loading) ApplyRule(false);
         }
 
-        /// <summary>关键输入变化时同步刷新页面底部的任务联动摘要。</summary>
-        private void LinkageInput_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (!_loading && TaskLinkageSummaryTextBlock != null) UpdateTaskLinkageSummary();
-        }
-
         /// <summary>只有负载校准时才允许填写负载说明。</summary>
         private void LoadConditionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -195,21 +191,31 @@ namespace UpperComInspectionInstrument2022.Views
             if (StandardComboBox.SelectedIndex < 0 || CalibrationTypeComboBox.SelectedIndex < 0) return;
             bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
             bool isJjf1101 = StandardComboBox.SelectedIndex == 0;
-            MeasurementRangeLabel.Text = PointSelectionComboBox.SelectedIndex == 1
-                ? "使用/测量范围 *"
-                : "使用/测量范围（可选）";
+            UpdateSamplingPlanControls(isJjf1101);
+            MeasurementRangeLabel.Text = "使用/测量范围（可选）";
             WorkZoneDimensionLabel.Text = !isJjf1101
                 ? "测温区尺寸 (mm) *"
                 : PointLayoutModeComboBox.SelectedIndex == 2
                     ? "工作区尺寸 (mm) *"
                     : "工作区尺寸 (mm)（可选）";
-            ViewLayoutFigureButton.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
-            ViewLayoutFigureButton.Content = PointLayoutModeComboBox.SelectedIndex switch
-            {
-                0 => "查看图 1",
-                1 => "查看图 2",
-                _ => "查看图 1 / 图 2"
-            };
+            FurnaceChamberDimensionGrid.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
+            ViewLayoutFigureButton.Visibility = Visibility.Visible;
+            ViewLayoutFigureButton.Content = isJjf1101
+                ? VolumeComboBox.SelectedIndex switch
+                {
+                    0 => "查看图 1",
+                    1 => "查看图 2",
+                    _ => "查看布点图"
+                }
+                : PointLayoutModeComboBox.SelectedIndex switch
+                {
+                    0 => "查看图 1",
+                    1 => "查看图 2",
+                    _ => "查看图 1 / 图 2"
+                };
+            ViewLayoutFigureButton.ToolTip = isJjf1101
+                ? "查看 JJF 1101-2019 图 1、图 2 的温度和湿度空间布点"
+                : "查看 JJF 1376-2012 图 1、图 2 的测温区与测温点位置";
             ApplyStandardVisibility(includesHumidity, isJjf1101);
 
             if (VolumeComboBox.SelectedIndex < 0)
@@ -235,10 +241,9 @@ namespace UpperComInspectionInstrument2022.Views
                 TemperatureCenterPointTextBox.IsReadOnly = true;
                 HumidityCenterPointTextBox.IsReadOnly = true;
                 PointLayoutDescriptionTextBox.IsReadOnly = true;
-                PlannedCountTextBox.IsReadOnly = !isJjf1101;
-                SamplingIntervalTextBox.IsReadOnly = !isJjf1101;
+                PlannedCountTextBox.IsReadOnly = false;
+                SamplingIntervalTextBox.IsReadOnly = false;
                 UpdateStabilityControls();
-                UpdateTaskLinkageSummary();
                 UpdateReferencedSettings();
                 return;
             }
@@ -271,17 +276,47 @@ namespace UpperComInspectionInstrument2022.Views
             // O 是规范中的空间位置；它映射到巡检仪哪个湿度通道取决于现场接线，始终允许确认/修改。
             HumidityCenterPointTextBox.IsReadOnly = false;
             PointLayoutDescriptionTextBox.IsReadOnly = !customPointInput;
-            PlannedCountTextBox.IsReadOnly = !isJjf1101;
-            SamplingIntervalTextBox.IsReadOnly = !isJjf1101;
+            PlannedCountTextBox.IsReadOnly = false;
+            SamplingIntervalTextBox.IsReadOnly = false;
             LoadDescriptionTextBox.IsEnabled = LoadConditionComboBox.SelectedIndex == 1;
             UpdateStabilityControls();
-            UpdateTaskLinkageSummary();
             UpdateReferencedSettings();
         }
 
-        /// <summary>按当前箱式炉布点模式打开规范图 1 或图 2。</summary>
+        /// <summary>
+        /// 根据所选规范说明正式采样计划的默认值和可调整方式。
+        /// </summary>
+        private void UpdateSamplingPlanControls(bool isJjf1101)
+        {
+            if (isJjf1101)
+            {
+                PlannedCountLabel.Text = "正式样本数 *";
+                SamplingIntervalLabel.Text = "正式采样间隔 (s) *";
+                PlannedCountTextBox.ToolTip = "正式校准阶段需要保存的完整样本组数。";
+                SamplingIntervalTextBox.ToolTip = "相邻两组正式样本的时间间隔，单位为秒。";
+                return;
+            }
+
+            PlannedCountLabel.Text = "正式样本数（≥20）*";
+            SamplingIntervalLabel.Text = "正式采样间隔 (s) *";
+            PlannedCountTextBox.ToolTip = "JJF 1376 默认至少 20 组；自定义计划仍不得少于 20 组。";
+            SamplingIntervalTextBox.ToolTip = "默认 180 s，可按现场要求修改；偏离规范默认计划时必须填写偏离/自定义说明。";
+        }
+
+        /// <summary>按当前规范、设备容积或箱式炉布点模式打开对应的规范布点图。</summary>
         private void ViewLayoutFigureButton_Click(object sender, RoutedEventArgs e)
         {
+            if (StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1101Index)
+            {
+                int preferredEnvironmentFigure = VolumeComboBox.SelectedIndex == 1 ? 2 : 1;
+                Jjf1101LayoutFigureWindow environmentWindow = new(preferredEnvironmentFigure)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                environmentWindow.ShowDialog();
+                return;
+            }
+
             int preferredFigure = PointLayoutModeComboBox.SelectedIndex == 1 ? 2 : 1;
             Jjf1376LayoutFigureWindow window = new(preferredFigure)
             {
@@ -306,58 +341,6 @@ namespace UpperComInspectionInstrument2022.Views
             AmbientPressureTextBox.Visibility = isJjf1101 ? Visibility.Visible : Visibility.Collapsed;
             AppearanceCheckLabel.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
             AppearanceCheckComboBox.Visibility = isJjf1101 ? Visibility.Collapsed : Visibility.Visible;
-        }
-
-        /// <summary>
-        /// 生成面向操作人员的联动摘要，明确保存后工作台将使用的工况、点数和中心点。
-        /// </summary>
-        private void UpdateTaskLinkageSummary()
-        {
-            if (TaskLinkageSummaryTextBlock == null || StandardComboBox.SelectedIndex < 0 ||
-                CalibrationTypeComboBox.SelectedIndex < 0) return;
-
-            bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
-            if (VolumeComboBox.SelectedIndex < 0)
-            {
-                CalibrationStandardRule pendingRule = CalibrationStandardRuleService.GetRule(
-                    StandardComboBox.SelectedIndex, 0, includesHumidity);
-                TaskLinkageSummaryTextBlock.Text =
-                    $"{pendingRule.Code} → {GetSelectedText(PointSelectionComboBox, "校准点方案未选择")}\n" +
-                    "请选择实际容积分类；选择后才生成空间测点数、中心点和工作台矩阵列。";
-                return;
-            }
-            CalibrationStandardRule rule = CalibrationStandardRuleService.GetRule(
-                StandardComboBox.SelectedIndex, VolumeComboBox.SelectedIndex, includesHumidity);
-            string calibrationType = StandardComboBox.SelectedIndex == 1 ? "炉温参数" : includesHumidity ? "温湿度参数" : "温度参数";
-            string setPoint = string.IsNullOrWhiteSpace(SetTemperatureTextBox.Text)
-                ? "当前温度未填写"
-                : $"当前 {SetTemperatureTextBox.Text.Trim()} ℃";
-            if (includesHumidity)
-                setPoint += string.IsNullOrWhiteSpace(SetHumidityTextBox.Text) ? " / 湿度未填写" : $" / {SetHumidityTextBox.Text.Trim()} %RH";
-            string temperaturePoints = string.IsNullOrWhiteSpace(TemperaturePointCountTextBox.Text)
-                ? "温度点数未生成"
-                : $"温度 {TemperaturePointCountTextBox.Text.Trim()} 点（中心 {TemperatureCenterPointTextBox.Text.Trim()}）";
-            string humidityPoints = includesHumidity
-                ? $" + 湿度 {HumidityPointCountTextBox.Text.Trim()} 点（O→CH{HumidityCenterPointTextBox.Text.Trim()}）"
-                : string.Empty;
-            string pointSource = GetSelectedText(PointSelectionComboBox, "校准点方案未选择");
-            string layoutMode = GetSelectedText(PointLayoutModeComboBox, "布点方式未选择");
-
-            TaskLinkageSummaryTextBlock.Text =
-                $"{rule.Code} → {calibrationType} → {pointSource} → {setPoint}\n" +
-                $"{rule.VolumeOptionText} → {layoutMode} → {temperaturePoints}{humidityPoints}\n" +
-                "保存任务后，校准工作台将按上述空间测点数生成实时数据矩阵。";
-        }
-
-        /// <summary>从普通字符串项或 ComboBoxItem 中读取显示文本。</summary>
-        private static string GetSelectedText(ComboBox comboBox, string fallback)
-        {
-            return comboBox.SelectedItem switch
-            {
-                ComboBoxItem item => item.Content?.ToString() ?? fallback,
-                string text => text,
-                _ => fallback
-            };
         }
 
         /// <summary>只在 JJF 1101 选择规范计时等待时显示等待分钟数。</summary>
@@ -410,6 +393,14 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationStandardRule rule = CalibrationStandardRuleService.GetRule(StandardComboBox.SelectedIndex, VolumeComboBox.SelectedIndex, includesHumidity);
 
             double? workZoneVolume = TryGetWorkZoneVolume(out bool hasAnyWorkZoneDimension);
+            bool furnaceChamberComplete = ParseOptionalPositiveDouble(FurnaceChamberLengthTextBox.Text).HasValue &&
+                                          ParseOptionalPositiveDouble(FurnaceChamberWidthTextBox.Text).HasValue &&
+                                          ParseOptionalPositiveDouble(FurnaceChamberHeightTextBox.Text).HasValue;
+            if (StandardComboBox.SelectedIndex == 1 && !furnaceChamberComplete)
+            {
+                ShowInputError("JJF 1376 附录 A 需要炉膛长度 L、宽度 W 和高度 H，请完整填写正数。", FurnaceChamberLengthTextBox);
+                return;
+            }
             if (StandardComboBox.SelectedIndex == 1 && !workZoneVolume.HasValue)
             {
                 ShowInputError("JJF 1376 原始记录需要测温区长度、宽度和高度，请完整填写正数。", WorkZoneLengthTextBox);
@@ -443,10 +434,6 @@ namespace UpperComInspectionInstrument2022.Views
                 }
                 setHumidity = humidity;
             }
-
-            if (PointSelectionComboBox.SelectedIndex == 1 &&
-                !ValidateRangeBasedCalibrationPoint(setTemperature, setHumidity, includesHumidity))
-                return;
 
             if (SensorTypeComboBox.SelectedIndex < 0)
             {
@@ -527,7 +514,7 @@ namespace UpperComInspectionInstrument2022.Views
                 ShowInputError("箱式电阻炉自定义测点数属于现场调整，必须在偏离/自定义说明中记录原因和依据。", DeviationDescriptionTextBox);
                 return;
             }
-            if (PointSelectionComboBox.SelectedIndex == 2 && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))
+            if (PointSelectionComboBox.SelectedIndex == 1 && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))
             {
                 ShowInputError("客户指定校准点必须在偏离/自定义说明中记录客户要求。", DeviationDescriptionTextBox);
                 return;
@@ -537,9 +524,19 @@ namespace UpperComInspectionInstrument2022.Views
                 ShowInputError("负载校准必须说明负载情况。", LoadDescriptionTextBox);
                 return;
             }
-            if (StandardComboBox.SelectedIndex == 1 && (plannedCount < 20 || samplingInterval != 180))
+            if (StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index && plannedCount < 20)
             {
-                MessageBox.Show("JJF 1376 要求每隔 3 min 记录一次且至少 20 次。", "采样计划不符合规范", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowInputError("JJF 1376 正式样本数不得少于 20 组。", PlannedCountTextBox);
+                return;
+            }
+            long jjf1376DurationSeconds = (long)(plannedCount - 1) * samplingInterval;
+            bool changedJjf1376Plan = StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index &&
+                                      (samplingInterval != 180 || jjf1376DurationSeconds > 3600);
+            if (changedJjf1376Plan && string.IsNullOrWhiteSpace(DeviationDescriptionTextBox.Text))
+            {
+                ShowInputError(
+                    "当前箱式炉采样间隔或计划总时长已偏离 JJF 1376 的默认执行要求，请在偏离/自定义说明中填写现场要求、原因和依据。",
+                    DeviationDescriptionTextBox);
                 return;
             }
             bool changedJjf1101Plan = StandardComboBox.SelectedIndex == 0 && (plannedCount != 16 || samplingInterval != 120);
@@ -614,6 +611,9 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.AmbientTemperature = ambientTemperature;
             CalibrationTaskContext.AmbientHumidity = ambientHumidity;
             CalibrationTaskContext.AmbientPressure = ambientPressure;
+            CalibrationTaskContext.FurnaceChamberLengthMm = ParseOptionalPositiveDouble(FurnaceChamberLengthTextBox.Text);
+            CalibrationTaskContext.FurnaceChamberWidthMm = ParseOptionalPositiveDouble(FurnaceChamberWidthTextBox.Text);
+            CalibrationTaskContext.FurnaceChamberHeightMm = ParseOptionalPositiveDouble(FurnaceChamberHeightTextBox.Text);
             CalibrationTaskContext.WorkZoneLengthMm = ParseOptionalPositiveDouble(WorkZoneLengthTextBox.Text);
             CalibrationTaskContext.WorkZoneWidthMm = ParseOptionalPositiveDouble(WorkZoneWidthTextBox.Text);
             CalibrationTaskContext.WorkZoneHeightMm = ParseOptionalPositiveDouble(WorkZoneHeightTextBox.Text);
@@ -674,61 +674,5 @@ namespace UpperComInspectionInstrument2022.Views
         private static bool TryParseDouble(string text, double min, double max, out double value) =>
             double.TryParse(text.Trim(), out value) && double.IsFinite(value) && value >= min && value <= max;
 
-        /// <summary>
-        /// 当用户选择“范围下限/上限/中间点”方案时，检查当前工况是否与填写的使用范围相匹配。
-        /// </summary>
-        private bool ValidateRangeBasedCalibrationPoint(double setTemperature, double? setHumidity, bool includesHumidity)
-        {
-            List<double> bounds = ExtractRangeNumbers(MeasurementRangeTextBox.Text);
-            int requiredNumberCount = includesHumidity ? 4 : 2;
-            if (bounds.Count < requiredNumberCount)
-            {
-                string example = includesHumidity ? "-40～150 ℃；20～95 %RH" : "300～1200 ℃";
-                ShowInputError($"当前校准点选择了使用范围联动，请按“下限～上限”填写测量范围，例如 {example}。", MeasurementRangeTextBox);
-                return false;
-            }
-
-            bool allowMiddle = StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1101Index;
-            if (!MatchesRangePoint(setTemperature, bounds[0], bounds[1], allowMiddle))
-            {
-                double lower = Math.Min(bounds[0], bounds[1]);
-                double upper = Math.Max(bounds[0], bounds[1]);
-                string allowed = allowMiddle
-                    ? $"{lower:0.###}、{(lower + upper) / 2:0.###} 或 {upper:0.###} ℃"
-                    : $"{lower:0.###} 或 {upper:0.###} ℃";
-                ShowInputError($"当前工况设定温度与所选校准点方案不一致，应为使用范围的{(allowMiddle ? "下限、中间点或上限" : "最低或最高工作温度")}：{allowed}。", SetTemperatureTextBox);
-                return false;
-            }
-
-            if (includesHumidity && setHumidity.HasValue && !MatchesRangePoint(setHumidity.Value, bounds[2], bounds[3], true))
-            {
-                double lower = Math.Min(bounds[2], bounds[3]);
-                double upper = Math.Max(bounds[2], bounds[3]);
-                ShowInputError($"设定湿度应为使用范围下限、中间点或上限：{lower:0.###}、{(lower + upper) / 2:0.###} 或 {upper:0.###} %RH。", SetHumidityTextBox);
-                return false;
-            }
-            return true;
-        }
-
-        /// <summary>从“下限～上限；下限～上限”一类自由文本中按出现顺序提取有限数。</summary>
-        private static List<double> ExtractRangeNumbers(string text)
-        {
-            List<double> values = new List<double>();
-            foreach (Match match in Regex.Matches(text ?? string.Empty, @"(?<!\d)[+-]?\d+(?:\.\d+)?"))
-            {
-                if (double.TryParse(match.Value, out double value) && double.IsFinite(value)) values.Add(value);
-            }
-            return values;
-        }
-
-        /// <summary>判断设定值是否等于范围下限、上限，或在允许时等于中间点。</summary>
-        private static bool MatchesRangePoint(double value, double first, double second, bool allowMiddle)
-        {
-            double lower = Math.Min(first, second);
-            double upper = Math.Max(first, second);
-            double tolerance = Math.Max(0.000001, Math.Max(Math.Abs(lower), Math.Abs(upper)) * 0.000001);
-            return Math.Abs(value - lower) <= tolerance || Math.Abs(value - upper) <= tolerance ||
-                   (allowMiddle && Math.Abs(value - (lower + upper) / 2) <= tolerance);
-        }
     }
 }

@@ -106,7 +106,7 @@ namespace UpperComInspectionInstrument2022.Services
             }
         }
 
-        /// <summary>创建标题、归档快照、结果、不确定度摘要、声明和签字区域。</summary>
+        /// <summary>创建标题、归档快照和结果正文，并把声明及签发区域统一放在报告末尾。</summary>
         private static void CreateCertificate(
             string path,
             IReadOnlyDictionary<string, string> summary,
@@ -124,80 +124,81 @@ namespace UpperComInspectionInstrument2022.Services
             mainPart.Document = new W.Document();
             AddStyles(mainPart);
             AddSettings(mainPart);
-            (string headerId, string footerId) = AddHeaderAndFooter(mainPart, summary);
+            string standard = Get(summary, "校准规范", "校准规范未填写");
+            bool isJjf1101 = standard.StartsWith("JJF 1101", StringComparison.Ordinal);
+            bool isJjf1376 = standard.StartsWith("JJF 1376", StringComparison.Ordinal);
+            (string headerId, string footerId) = AddHeaderAndFooter(mainPart, summary, standard);
 
             W.Body body = new();
             mainPart.Document.Append(body);
-            string standard = Get(summary, "校准规范", "校准规范未填写");
+            if (isJjf1101)
+            {
+                AppendJjf1101Certificate(body, summary, task, resultRows);
+            }
+            else if (isJjf1376)
+            {
+                AppendJjf1376Certificate(body, summary, task, resultRows);
+            }
+            else
+            {
             string specificTitle = standard.StartsWith("JJF 1376", StringComparison.Ordinal)
                 ? "箱式电阻炉校准证书"
                 : "环境试验设备温湿度参数校准证书";
             body.Append(
                 Paragraph("校准证书", "CertificateKicker", W.JustificationValues.Center),
                 Paragraph(specificTitle, "Title", W.JustificationValues.Center),
-                Paragraph($"依据 {standard}  ·  单工况作业  ·  任务编号 {Get(summary, "任务编号", "-")}", "Subtitle", W.JustificationValues.Center),
+                Paragraph($"证书编号：{Get(summary, "任务编号", "-")}", "Subtitle", W.JustificationValues.Center),
                 Paragraph("待审核签发", "Status", W.JustificationValues.Center));
 
-            body.Append(Callout(
-                "本证书由系统根据已完成作业的固化 CSV 自动生成。签发前应核验原始记录、标准器溯源状态、计算结果及签字信息；本系统未根据参考技术指标自动作出合格或不合格判定。"));
-
-            body.Append(Heading("一、作业与被校设备信息"));
+            body.Append(Heading("一、基本信息"));
             body.Append(KeyValueTable(new[]
             {
-                Pair("任务编号", Get(summary, "任务编号", "-")), Pair("作业状态", Get(summary, "状态", "-")),
-                Pair("校准规范", standard), Pair("校准类型", Get(summary, "校准类型", "-")),
+                Pair("实验室名称", Get(task, "实验室名称", "未填写（签发前补全）")), Pair("实验室地址", Get(task, "实验室地址", "未填写（签发前补全）")),
+                Pair("校准地点", Get(task, "校准地点", "未填写（签发前补全）")), Pair("校准日期", Get(task, "校准日期", "-")),
+                Pair("委托单位", Get(task, "委托单位", "未填写（可选）")), Pair("委托单位地址", Get(task, "委托单位地址", "未填写（可选）")),
                 Pair("被校设备", Get(task, "被校设备名称", "未填写（可选）")), Pair("设备编号", Get(task, "设备编号", "未填写（可选）")),
                 Pair("型号规格", Get(task, "型号规格", "未填写（可选）")), Pair("制造单位", Get(task, "制造单位", "未填写（可选）")),
-                Pair("测量范围", Get(task, "测量范围", "未填写（可选）")), Pair("委托单位", Get(task, "委托单位", "未填写（可选）")),
-                Pair("校准地点", Get(task, "校准地点", "未填写（可选）")), Pair("校准日期", Get(task, "校准日期", "-"))
+                Pair("测量范围", Get(task, "测量范围", "未填写（可选）")), Pair("校准项目", Get(summary, "校准类型", "-"))
             }));
 
-            body.Append(Heading("二、标准器及溯源信息"));
+            body.Append(Heading("二、校准依据、测量标准与环境"));
             body.Append(KeyValueTable(new[]
             {
+                Pair("校准依据", standard), Pair("偏离说明", Get(task, "偏离说明", "无")),
                 Pair("标准器名称", Get(task, "标准器名称", "-")), Pair("标准器编号", Get(task, "标准器编号", "-")),
                 Pair("型号", Get(task, "标准器型号", "-")), Pair("证书编号", Get(task, "标准器证书编号", "-")),
                 Pair("有效期", Get(task, "标准器有效期", "-")), Pair("溯源机构", Get(task, "标准器溯源机构", "-")),
                 Pair("温度范围", Get(task, "标准器温度范围", "-")), Pair("湿度范围", Get(task, "标准器湿度范围", "-")),
                 Pair("温度分辨力", AppendUnit(Get(task, "标准器温度分辨力"), "℃")), Pair("湿度分辨力", AppendUnit(Get(task, "标准器湿度分辨力"), "%RH")),
+                Pair("环境条件", BuildEnvironment(task)), Pair("负载说明", Get(task, "负载说明", "无/未填写")),
                 Pair("准确度/最大允许误差", Get(task, "标准器准确度", "-")), Pair("测温仪器/热电偶等级", BuildFurnaceStandard(task))
             }));
 
-            body.Append(Heading("三、校准条件与执行方案"));
-            body.Append(KeyValueTable(new[]
-            {
-                Pair("设定温度", AppendUnit(Get(task, "设定温度(℃)"), "℃")), Pair("设定湿度", AppendUnit(Get(task, "设定湿度(%RH)"), "%RH")),
-                Pair("温度测点", BuildPointSummary(task, "温度")), Pair("湿度测点", BuildPointSummary(task, "湿度")),
-                Pair("传感器类型", Get(task, "传感器类型", "-")), Pair("工作区尺寸", BuildWorkZone(task)),
-                Pair("环境条件", BuildEnvironment(task)), Pair("负载说明", Get(task, "负载说明", "无/未填写")),
-                Pair("正式采样计划", $"{Get(task, "计划样本数", "-")} 组，每 {Get(task, "采样间隔(s)", "-")} s"), Pair("稳定等待", AppendUnit(Get(task, "稳定等待(min)"), "min")),
-                Pair("布点说明", Get(task, "布点说明", "-")), Pair("偏离说明", Get(task, "偏离说明", "无"))
-            }));
-
-            body.Append(Heading("四、校准结果"));
+            body.Append(Heading("三、校准结果"));
             body.Append(ResultTable(resultRows));
-            body.Append(Paragraph("结果说明：以上量值来自归档的正式样本和规范计算结果；实时趋势数据不参与正式结果计算。", "Note"));
-
-            body.Append(Heading("五、测量不确定度摘要"));
+            body.Append(Heading("四、测量不确定度摘要"));
             W.Table? uncertaintyTable = BuildUncertaintySummaryTable(uncertaintyRows);
             if (uncertaintyTable != null)
                 body.Append(uncertaintyTable);
             else
                 body.Append(Callout("该历史归档未保存结构化不确定度分量，证书只能展示校准结果文件中的最终量值；签发前应查验原始评定资料。"));
+            body.Append(Paragraph("以上量值来自本次作业的正式样本和规范计算结果；实时趋势数据不参与正式结果计算。", "Note"));
 
-            body.Append(Heading("六、声明与签发"));
+            body.Append(Heading("五、声明与签发"));
             body.Append(Paragraph(
-                "本证书仅对本次单工况、所列布点和归档正式样本负责。被校设备与委托档案中标记为“未填写（可选）”的字段应在正式签发前按实验室管理程序补全或确认不适用。未经书面批准，不得部分复制本证书。",
+                "本证书所列校准结果仅对本次被校对象、所列布点和正式样本有效。签发前应核验原始记录、测量标准溯源状态、结果和签字信息。未经实验室书面批准，不得部分复制本证书。",
                 "Normal"));
             body.Append(SignatureTable(task));
             body.Append(Paragraph($"证书生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}    数据格式版本：{Get(summary, "数据格式版本", "1.0")}", "FooterNote", W.JustificationValues.Center));
+            }
 
             body.Append(new W.SectionProperties(
                 new W.HeaderReference { Type = W.HeaderFooterValues.Default, Id = headerId },
                 new W.FooterReference { Type = W.HeaderFooterValues.Default, Id = footerId },
-                new W.PageSize { Width = 12240U, Height = 15840U },
-                new W.PageMargin { Top = 1440, Right = 1440U, Bottom = 1440, Left = 1440U, Header = 708U, Footer = 708U, Gutter = 0U }));
+                new W.PageSize { Width = 11906U, Height = 16838U },
+                new W.PageMargin { Top = 1080, Right = 1150U, Bottom = 1080, Left = 1150U, Header = 560U, Footer = 560U, Gutter = 0U }));
             mainPart.Document.Save();
+
         }
 
         /// <summary>建立 standard_business_brief 对应的中文字体、字号、颜色与段落节奏。</summary>
@@ -206,14 +207,15 @@ namespace UpperComInspectionInstrument2022.Services
             StyleDefinitionsPart stylePart = mainPart.AddNewPart<StyleDefinitionsPart>();
             W.Styles styles = new();
             styles.Append(
-                ParagraphStyle("Normal", "正文", 21, "111827", 0, 120, 264),
-                ParagraphStyle("Title", "标题", 44, "0F172A", 0, 100, 240, bold: true, centered: true),
-                ParagraphStyle("Subtitle", "副标题", 22, "475569", 0, 160, 240, centered: true),
-                ParagraphStyle("CertificateKicker", "证书标识", 20, "2563EB", 0, 60, 240, bold: true, centered: true),
-                ParagraphStyle("Status", "签发状态", 18, "B45309", 0, 180, 240, bold: true, centered: true),
-                ParagraphStyle("Heading1", "一级标题", 32, "2E74B5", 320, 160, 264, bold: true, keepNext: true),
-                ParagraphStyle("Note", "说明", 19, "475569", 100, 120, 264),
-                ParagraphStyle("FooterNote", "页尾说明", 17, "64748B", 180, 0, 240, centered: true));
+                ParagraphStyle("Normal", "正文", 20, "000000", 0, 100, 252),
+                ParagraphStyle("Title", "标题", 36, "000000", 0, 180, 280, bold: true, centered: true),
+                ParagraphStyle("Subtitle", "副标题", 22, "000000", 0, 140, 252, centered: true),
+                ParagraphStyle("CertificateKicker", "证书标识", 20, "000000", 0, 80, 240, bold: true, centered: true),
+                //ParagraphStyle("Status", "签发状态", 18, "000000", 0, 160, 240, centered: true),
+                ParagraphStyle("Heading1", "一级标题", 24, "000000", 260, 120, 252, bold: true, keepNext: true),
+                ParagraphStyle("Subheading", "二级标题", 20, "000000", 220, 100, 240, keepNext: true),
+                ParagraphStyle("Note", "说明", 18, "000000", 80, 100, 240),
+                ParagraphStyle("FooterNote", "页尾说明", 17, "000000", 120, 0, 240, centered: true));
             stylePart.Styles = styles;
             stylePart.Styles.Save();
         }
@@ -226,14 +228,274 @@ namespace UpperComInspectionInstrument2022.Services
             settingsPart.Settings.Save();
         }
 
+        /// <summary>
+        /// 生成 JJF 1101-2019 校准证书正文。
+        /// 第一页保留证书身份、溯源和校准条件；后续内容按附录 B 展示布点图和最终结果，声明与签发统一收尾。
+        /// 原始的逐次测量值不在证书内重复堆叠，而由同一作业目录下的 Excel《校准原始记录》承载。
+        /// </summary>
+        private static void AppendJjf1101Certificate(
+            W.Body body,
+            IReadOnlyDictionary<string, string> summary,
+            IReadOnlyDictionary<string, string> task,
+            IReadOnlyList<string[]> resultRows)
+        {
+            body.Append(
+                Paragraph("校 准 证 书", "Title", W.JustificationValues.Center),
+                Paragraph("环境试验设备温度湿度参数校准", "Subtitle", W.JustificationValues.Center),
+                Paragraph($"证书编号：{Get(summary, "任务编号", "-")}", "Subtitle", W.JustificationValues.Center));
+
+            body.Append(Heading("一、基本信息"));
+            body.Append(FormalKeyValueTable(new[]
+            {
+                Pair("实验室名称", Get(task, "实验室名称", "未填写（签发前补全）")), Pair("实验室地址", Get(task, "实验室地址", "未填写（签发前补全）")),
+                Pair("委托单位", Get(task, "委托单位", "未填写（可选）")), Pair("校准地点", Get(task, "校准地点", "未填写（签发前补全）")),
+                Pair("被校设备", Get(task, "被校设备名称", "未填写（可选）")), Pair("设备编号", Get(task, "设备编号", "未填写（可选）")),
+                Pair("型号规格", Get(task, "型号规格", "未填写（可选）")), Pair("制造单位", Get(task, "制造单位", "未填写（可选）")),
+                Pair("校准日期", Get(task, "校准日期", "-")), Pair("记录编号", Get(summary, "任务编号", "-"))
+            }));
+
+            body.Append(Heading("二、校准依据与测量标准"));
+            body.Append(FormalKeyValueTable(new[]
+            {
+                Pair("校准依据", Get(summary, "校准规范", "JJF 1101-2019")), Pair("偏离说明", Get(task, "偏离说明", "无")),
+                Pair("标准器名称", Get(task, "标准器名称", "未填写")), Pair("型号/规格", Get(task, "标准器型号", "未填写")),
+                Pair("标准器编号", Get(task, "标准器编号", "未填写")), Pair("证书编号", Get(task, "标准器证书编号", "未填写")),
+                Pair("有效期至", Get(task, "标准器有效期", "未填写")), Pair("溯源机构", Get(task, "标准器溯源机构", "未填写")),
+                Pair("准确度/最大允许误差", Get(task, "标准器准确度", "未填写")), Pair("测量范围", Get(task, "测量范围", "未填写（可选）"))
+            }));
+
+            body.Append(Heading("三、校准条件"));
+            body.Append(FormalKeyValueTable(new[]
+            {
+                Pair("环境条件", BuildEnvironment(task)), Pair("负载说明", Get(task, "负载说明", "无/未填写")),
+                Pair("设定值", BuildJjf1101SetPoint(task)), Pair("测点配置", $"温度 {BuildPointSummary(task, "温度")}；湿度 {BuildPointSummary(task, "湿度")}"),
+                Pair("采样方案", $"{Get(task, "正式样本数", Get(summary, "计划样本数", "-"))} 组，间隔 {AppendUnit(Get(task, "采样间隔(s)"), "s")}"), Pair("布点方式", Get(task, "布点方式", "按任务配置"))
+            }));
+
+            body.Append(PageBreak());
+            body.Append(
+                Paragraph("环境试验设备校准证书内页", "Subtitle", W.JustificationValues.Center),
+                Paragraph("校 准 结 果", "Title", W.JustificationValues.Center),
+                Paragraph("1.  布点示意图", "Subheading"));
+            body.Append(Jjf1101PointLayoutFigure(task));
+            body.Append(Paragraph("图 B1  布点示意图", "FooterNote", W.JustificationValues.Center));
+            body.Append(Paragraph(BuildJjf1101HumidityPointNote(task), "Note"));
+            body.Append(Paragraph("2.  校准结果", "Subheading"));
+            body.Append(Jjf1101ResultTable(task, resultRows));
+            body.Append(Paragraph("注：未填写的身份信息和签字项应在证书审核签发前补全。", "Note"));
+            AppendCertificateClosing(
+                body,
+                "四、声明与签发",
+                "本证书所列校准结果仅对本次被校对象、所列布点和正式样本有效。签发前应核验原始记录、测量标准溯源状态、校准结果和签字信息。未经实验室书面批准，不得部分复制本证书。",
+                task);
+        }
+
+        /// <summary>创建 JJF 1101 正式黑白表格中的“标签—值—标签—值”信息行。</summary>
+        private static W.Table FormalKeyValueTable(IReadOnlyList<(string Label, string Value)> fields)
+        {
+            List<string[]> rows = new();
+            for (int index = 0; index < fields.Count; index += 2)
+            {
+                (string Label, string Value) left = fields[index];
+                (string Label, string Value) right = index + 1 < fields.Count ? fields[index + 1] : (string.Empty, string.Empty);
+                rows.Add(new[] { left.Label, left.Value, right.Label, right.Value });
+            }
+            return FormalTable(rows, new[] { 1500, 3180, 1500, 3180 }, labelColumns: new HashSet<int> { 0, 2 });
+        }
+
+        /// <summary>创建附录 B 风格的三层空间布点示意图；调整布点时改为可复核的点位摘要。</summary>
+        private static W.Table Jjf1101PointLayoutFigure(IReadOnlyDictionary<string, string> task)
+        {
+            int pointCount = ParsePositiveInt(Get(task, "温度测点数", "0"));
+            int centerPoint = ParsePositiveInt(Get(task, "温度中心点", "0"));
+            int humidityPointCount = ParsePositiveInt(Get(task, "湿度测点数", "0"));
+            bool isDefaultLayout = !int.TryParse(Get(task, "布点方式索引", "0"), NumberStyles.Integer,
+                                       CultureInfo.InvariantCulture, out int layoutMode) || layoutMode == 0;
+            if (!isDefaultLayout || pointCount is not (9 or 15) || centerPoint != (pointCount == 9 ? 5 : 15))
+                return Jjf1101PointLayoutTable(task);
+
+            string Label(int point, string humidity = "") => humidityPointCount > 0 && !string.IsNullOrWhiteSpace(humidity)
+                ? $"{point} {humidity}"
+                : point.ToString(CultureInfo.InvariantCulture);
+            string[,] upper = new string[3, 3];
+            string[,] middle = new string[3, 3];
+            string[,] lower = new string[3, 3];
+
+            upper[0, 0] = Label(1, "A"); upper[0, 2] = Label(2); upper[2, 0] = Label(4); upper[2, 2] = Label(3);
+            lower[0, 0] = Label(6); lower[0, 2] = Label(7); lower[2, 0] = Label(9); lower[2, 2] = Label(8, "B");
+            if (pointCount == 9)
+            {
+                middle[1, 1] = Label(5, "O");
+            }
+            else
+            {
+                upper[1, 1] = Label(5);
+                middle[0, 1] = Label(11);
+                middle[1, 0] = Label(14);
+                middle[1, 1] = Label(15, "O");
+                middle[1, 2] = Label(12);
+                middle[2, 1] = Label(13, "C");
+                lower[1, 1] = Label(10);
+            }
+
+            W.Table table = new();
+            table.Append(new W.TableProperties(
+                new W.TableWidth { Type = W.TableWidthUnitValues.Dxa, Width = ContentWidth.ToString(CultureInfo.InvariantCulture) },
+                new W.TableIndentation { Type = W.TableWidthUnitValues.Dxa, Width = TableIndent },
+                new W.TableBorders(
+                    NilBorder<W.TopBorder>(), NilBorder<W.LeftBorder>(), NilBorder<W.BottomBorder>(), NilBorder<W.RightBorder>(),
+                    NilBorder<W.InsideHorizontalBorder>(), NilBorder<W.InsideVerticalBorder>()),
+                new W.TableLayout { Type = W.TableLayoutValues.Fixed }));
+            table.Append(new W.TableGrid(
+                new W.GridColumn { Width = "3120" }, new W.GridColumn { Width = "3120" }, new W.GridColumn { Width = "3120" }));
+            W.TableRow row = new();
+            row.Append(DiagramCell("上  层", upper), DiagramCell("中  层", middle), DiagramCell("下  层", lower));
+            table.Append(row);
+            return table;
+        }
+
+        /// <summary>创建布点示意图中的一个层面方框。</summary>
+        private static W.TableCell DiagramCell(string title, string[,] labels)
+        {
+            W.Table diagram = new();
+            diagram.Append(new W.TableProperties(
+                new W.TableWidth { Type = W.TableWidthUnitValues.Dxa, Width = "2700" },
+                new W.TableBorders(
+                    BlackBorder<W.TopBorder>(), BlackBorder<W.LeftBorder>(), BlackBorder<W.BottomBorder>(), BlackBorder<W.RightBorder>(),
+                    NilBorder<W.InsideHorizontalBorder>(), NilBorder<W.InsideVerticalBorder>()),
+                new W.TableLayout { Type = W.TableLayoutValues.Fixed }));
+            diagram.Append(new W.TableGrid(
+                new W.GridColumn { Width = "900" }, new W.GridColumn { Width = "900" }, new W.GridColumn { Width = "900" }));
+            for (int rowIndex = 0; rowIndex < 3; rowIndex++)
+            {
+                W.TableRow row = new(new W.TableRowProperties(new W.TableRowHeight { Val = 520U, HeightType = W.HeightRuleValues.AtLeast }));
+                for (int columnIndex = 0; columnIndex < 3; columnIndex++)
+                {
+                    W.Paragraph paragraph = Paragraph(labels[rowIndex, columnIndex] ?? string.Empty, "Normal", W.JustificationValues.Center);
+                    row.Append(new W.TableCell(
+                        new W.TableCellProperties(
+                            new W.TableCellWidth { Type = W.TableWidthUnitValues.Dxa, Width = "900" },
+                            new W.TableCellVerticalAlignment { Val = W.TableVerticalAlignmentValues.Center }),
+                        paragraph));
+                }
+                diagram.Append(row);
+            }
+
+            return new W.TableCell(
+                new W.TableCellProperties(
+                    new W.TableCellWidth { Type = W.TableWidthUnitValues.Dxa, Width = "3120" },
+                    new W.TableCellMargin(
+                        new W.TableCellLeftMargin { Width = 180, Type = W.TableWidthValues.Dxa },
+                        new W.TableCellRightMargin { Width = 180, Type = W.TableWidthValues.Dxa }),
+                    new W.TableCellVerticalAlignment { Val = W.TableVerticalAlignmentValues.Top }),
+                Paragraph(title, "Normal", W.JustificationValues.Center),
+                diagram,
+                Paragraph("门", "FooterNote", W.JustificationValues.Center));
+        }
+
+        /// <summary>插入显式分页符，使证书正文与附录 B 内页稳定分开。</summary>
+        private static W.Paragraph PageBreak() => new(new W.Run(new W.Break { Type = W.BreakValues.Page }));
+
+        /// <summary>
+        /// 生成 JJF 1376-2012 校准证书正文和附录 B 风格的结果内页。
+        /// 原始 20 组测量值、修正值和实际温度由 Excel 附录 A 记录承载。
+        /// </summary>
+        private static void AppendJjf1376Certificate(
+            W.Body body,
+            IReadOnlyDictionary<string, string> summary,
+            IReadOnlyDictionary<string, string> task,
+            IReadOnlyList<string[]> resultRows)
+        {
+            body.Append(
+                Paragraph("校 准 证 书", "Title", W.JustificationValues.Center),
+                Paragraph("箱式电阻炉校准", "Subtitle", W.JustificationValues.Center),
+                Paragraph($"证书编号：{Get(summary, "任务编号", "-")}", "Subtitle", W.JustificationValues.Center));
+
+            body.Append(Heading("一、基本信息"));
+            body.Append(FormalKeyValueTable(new[]
+            {
+                Pair("实验室名称", Get(task, "实验室名称", "未填写（签发前补全）")), Pair("实验室地址", Get(task, "实验室地址", "未填写（签发前补全）")),
+                Pair("委托单位", Get(task, "委托单位", "未填写（可选）")), Pair("校准地点", Get(task, "校准地点", "未填写（签发前补全）")),
+                Pair("被校设备", Get(task, "被校设备名称", "未填写（可选）")), Pair("设备编号", Get(task, "设备编号", "未填写（可选）")),
+                Pair("型号规格", Get(task, "型号规格", "未填写（可选）")), Pair("制造单位", Get(task, "制造单位", "未填写（可选）")),
+                Pair("校准日期", Get(task, "校准日期", "-")), Pair("流水号", Get(summary, "任务编号", "-"))
+            }));
+
+            body.Append(Heading("二、校准依据与条件"));
+            body.Append(FormalKeyValueTable(new[]
+            {
+                Pair("校准依据", Get(summary, "校准规范", "JJF 1376-2012")), Pair("偏离说明", Get(task, "偏离说明", "无")),
+                Pair("标准设备", Get(task, "标准器名称", "未填写")), Pair("型号/编号", $"{Get(task, "标准器型号", "-")} / {Get(task, "标准器编号", "-")}"),
+                Pair("证书编号", Get(task, "标准器证书编号", "未填写")), Pair("有效期至", Get(task, "标准器有效期", "未填写")),
+                Pair("环境温度", AppendUnit(Get(task, "环境温度(℃)"), "℃")), Pair("相对湿度", AppendUnit(Get(task, "环境湿度(%RH)"), "%RH")),
+                Pair("炉膛尺寸", BuildFurnaceChamber(task)), Pair("测温区尺寸", BuildWorkZone(task))
+            }));
+
+            body.Append(PageBreak());
+            body.Append(
+                Paragraph("箱式电阻炉校准结果", "Subtitle", W.JustificationValues.Center),
+                Paragraph("校 准 结 果", "Title", W.JustificationValues.Center),
+                FurnaceResultTable(task, resultRows));
+            AppendCertificateClosing(
+                body,
+                "三、声明与签发",
+                "本证书所列校准结果仅对本次被校对象、所列测温区和正式样本有效。签发前应核验原始记录、测量标准溯源状态、校准结果和签字信息。未经实验室书面批准，不得部分复制本证书。",
+                task);
+            //body.Append(Paragraph("（以下空白）", "FooterNote", W.JustificationValues.Center));
+        }
+
+        /// <summary>生成 JJF 1376 附录 B 的外观检查、五类结果和两项均匀度不确定度。</summary>
+        private static W.Table FurnaceResultTable(
+            IReadOnlyDictionary<string, string> task,
+            IReadOnlyList<string[]> resultRows)
+        {
+            Dictionary<string, string> values = resultRows.Skip(1)
+                .Where(row => row.Length >= 2 && !string.IsNullOrWhiteSpace(row[0]))
+                .GroupBy(row => row[0], StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First()[1], StringComparer.Ordinal);
+            string Value(string key) => values.TryGetValue(key, out string? value) ? FormatResultValue(value) : "—";
+            string coverage = Get(task, "标准器温度包含因子", "2");
+            string[][] display =
+            {
+                new[] { "序号", "校准项目", "符号", "校准结果" },
+                new[] { "1", "外观检查", "—", Get(task, "外观检查", "待检查") },
+                new[] { "2", "炉温均匀度", "Δθ+", $"{Value("炉温均匀度上偏差")} ℃" },
+                new[] { "", "炉温均匀度", "Δθ−", $"{Value("炉温均匀度下偏差")} ℃" },
+                new[] { "3", "炉温稳定度", "δ+", $"{Value("炉温稳定度上偏差")} ℃" },
+                new[] { "", "炉温稳定度", "δ−", $"{Value("炉温稳定度下偏差")} ℃" },
+                new[] { "4", "炉温偏差", "Δt+", $"{Value("炉温偏差上偏差")} ℃" },
+                new[] { "", "炉温偏差", "Δt−", $"{Value("炉温偏差下偏差")} ℃" },
+                new[] { "5", "炉内最大温差", "Δts", $"{Value("炉内最大温差")} ℃" },
+                new[] { "6", "炉温均匀度测量结果的扩展不确定度", "Δθ+", $"U={Value("炉温均匀度上偏差扩展不确定度")} ℃；k={coverage}" },
+                new[] { "", "炉温均匀度测量结果的扩展不确定度", "Δθ−", $"U={Value("炉温均匀度下偏差扩展不确定度")} ℃；k={coverage}" }
+            };
+            return FormalTable(display, new[] { 900, 3500, 1300, 3660 }, headerRow: true,
+                centeredColumns: new HashSet<int> { 0, 2, 3 });
+        }
+
         /// <summary>创建安静的运行页眉与“第 X 页 共 Y 页”页脚。</summary>
-        private static (string HeaderId, string FooterId) AddHeaderAndFooter(MainDocumentPart mainPart, IReadOnlyDictionary<string, string> summary)
+        private static (string HeaderId, string FooterId) AddHeaderAndFooter(
+            MainDocumentPart mainPart,
+            IReadOnlyDictionary<string, string> summary,
+            string standard)
         {
             HeaderPart headerPart = mainPart.AddNewPart<HeaderPart>();
-            headerPart.Header = new W.Header(Paragraph(
-                $"温湿度校准系统  |  {Get(summary, "任务编号", "-")}",
+            bool isJjf1101 = standard.StartsWith("JJF 1101", StringComparison.Ordinal);
+            bool isJjf1376 = standard.StartsWith("JJF 1376", StringComparison.Ordinal);
+            bool useStandardHeader = isJjf1101 || isJjf1376;
+            W.Paragraph headerParagraph = Paragraph(
+                isJjf1101 ? "JJF 1101—2019" : isJjf1376 ? "JJF 1376—2012" : $"温湿度校准系统  |  {Get(summary, "任务编号", "-")}",
                 "FooterNote",
-                W.JustificationValues.Right));
+                useStandardHeader ? W.JustificationValues.Center : W.JustificationValues.Right);
+            if (useStandardHeader)
+            {
+                headerParagraph.ParagraphProperties = new W.ParagraphProperties(
+                    new W.ParagraphStyleId { Val = "FooterNote" },
+                    new W.ParagraphBorders(
+                        new W.BottomBorder { Val = W.BorderValues.Single, Color = "000000", Size = 8U, Space = 6U }),
+                    new W.Justification { Val = W.JustificationValues.Center });
+            }
+            headerPart.Header = new W.Header(headerParagraph);
             headerPart.Header.Save();
 
             FooterPart footerPart = mainPart.AddNewPart<FooterPart>();
@@ -333,11 +595,141 @@ namespace UpperComInspectionInstrument2022.Services
             foreach (string[] row in rows.Skip(1))
             {
                 if (row.Length == 0 || string.IsNullOrWhiteSpace(row[0])) continue;
-                display.Add(new[] { Cell(row, 0), Cell(row, 1), Cell(row, 2), Cell(row, 3) });
+                display.Add(new[] { Cell(row, 0), FormatResultValue(Cell(row, 1)), Cell(row, 2), Cell(row, 3) });
             }
             if (display.Count == 1) display.Add(new[] { "无可用结果", "-", "-", "请核验校准结果.csv" });
             return Table(display, new[] { 2700, 1400, 900, 4360 }, headerRow: true, centeredColumns: new HashSet<int> { 1, 2 });
         }
+
+        /// <summary>
+        /// 生成 JJF 1101-2019 附录 B 所需的布点示意表。
+        /// 实际测点编号来自任务快照，中心点单独放在中层，其他点均匀分列到上、下层。
+        /// </summary>
+        private static W.Table Jjf1101PointLayoutTable(IReadOnlyDictionary<string, string> task)
+        {
+            int pointCount = ParsePositiveInt(Get(task, "温度测点数", "0"));
+            int centerPoint = ParsePositiveInt(Get(task, "温度中心点", "0"));
+            int humidityPointCount = ParsePositiveInt(Get(task, "湿度测点数", "0"));
+            bool hasHumidity = humidityPointCount > 0;
+            bool isDefaultLayout = !int.TryParse(Get(task, "布点方式索引", "0"), NumberStyles.Integer,
+                                       CultureInfo.InvariantCulture, out int layoutMode) || layoutMode == 0;
+            string Point(int number, string humidityPoint = "") => hasHumidity && !string.IsNullOrWhiteSpace(humidityPoint)
+                ? $"T{number} / {humidityPoint}"
+                : $"T{number}";
+
+            if (isDefaultLayout && pointCount == 9 && centerPoint == 5)
+            {
+                return Table(new[]
+                {
+                    new[] { "层面", "左侧", "中心", "右侧" },
+                    new[] { "上层", Point(1, "A"), "—", Point(2) },
+                    new[] { "", Point(4), "—", Point(3) },
+                    new[] { "中层", "—", Point(5, "O"), "—" },
+                    new[] { "下层", Point(6), "—", Point(7) },
+                    new[] { "", Point(9), "—", Point(8, "B") }
+                }, new[] { 1100, 2750, 2750, 2760 }, headerRow: true,
+                    centeredColumns: new HashSet<int> { 0, 1, 2, 3 });
+            }
+
+            if (isDefaultLayout && pointCount == 15 && centerPoint == 15)
+            {
+                return Table(new[]
+                {
+                    new[] { "层面", "左侧", "中心", "右侧" },
+                    new[] { "上层", Point(1, "A"), "—", Point(2) },
+                    new[] { "", "—", Point(5), "—" },
+                    new[] { "", Point(4), "—", Point(3) },
+                    new[] { "中层", "—", Point(11), "—" },
+                    new[] { "", Point(14), Point(15, "O"), Point(12) },
+                    new[] { "", "—", Point(13, "C"), "—" },
+                    new[] { "下层", Point(6), "—", Point(7) },
+                    new[] { "", "—", Point(10), "—" },
+                    new[] { "", Point(9), "—", Point(8, "B") }
+                }, new[] { 1100, 2750, 2750, 2760 }, headerRow: true,
+                    centeredColumns: new HashSet<int> { 0, 1, 2, 3 });
+            }
+
+            string temperaturePoints = pointCount > 0
+                ? FormatPointList(Enumerable.Range(1, pointCount))
+                : "—";
+            string humidityPoints = humidityPointCount > 0
+                ? string.Join("、", Enumerable.Range(1, humidityPointCount).Select(index => $"H{index}"))
+                : "—";
+            string centerText = centerPoint > 0 && centerPoint <= pointCount ? $"T{centerPoint}" : "—";
+            return Table(new[]
+            {
+                new[] { "布点方式", "温度测点", "温度中心点", "湿度测点" },
+                new[] { "自定义/调整布点", temperaturePoints, centerText, humidityPoints }
+            }, new[] { 1800, 3960, 1600, 2000 }, headerRow: true,
+                centeredColumns: new HashSet<int> { 0, 2, 3 });
+        }
+
+        /// <summary>组合温度布点说明和湿度 O 点映射，供证书布点示意下方复核。</summary>
+        private static string BuildJjf1101HumidityPointNote(IReadOnlyDictionary<string, string> task)
+        {
+            int humidityPointCount = ParsePositiveInt(Get(task, "湿度测点数", "0"));
+            int humidityCenterPoint = ParsePositiveInt(Get(task, "湿度中心点", "0"));
+            string humidityText;
+            if (humidityPointCount <= 0)
+            {
+                humidityText = "本工况不包含湿度参数。";
+            }
+            else
+            {
+                string points = string.Join("、", Enumerable.Range(1, humidityPointCount).Select(index => $"H{index}"));
+                string center = humidityCenterPoint > 0 && humidityCenterPoint <= humidityPointCount
+                    ? $"H{humidityCenterPoint}"
+                    : "按任务配置";
+                humidityText = $"湿度通道：{points}；规范图中的 O 点对应 {center}，A/B/C 点按实际接线关系核对。";
+            }
+            return $"温度布点：{Get(task, "布点说明", "按任务配置")} {humidityText}";
+        }
+
+        /// <summary>生成 JJF 1101-2019 附录 B 的精简证书结果表。</summary>
+        private static W.Table Jjf1101ResultTable(
+            IReadOnlyDictionary<string, string> task,
+            IReadOnlyList<string[]> resultRows)
+        {
+            Dictionary<string, string> values = resultRows.Skip(1)
+                .Where(row => row.Length >= 2 && !string.IsNullOrWhiteSpace(row[0]))
+                .GroupBy(row => row[0], StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First()[1], StringComparer.Ordinal);
+            string Value(string key) => values.TryGetValue(key, out string? value) ? FormatResultValue(value) : "—";
+
+            bool hasHumidity = ParsePositiveInt(Get(task, "湿度测点数", "0")) > 0;
+            string HumidityValue(string key) => hasHumidity ? Value(key) : "—";
+            string temperatureCoverage = Get(task, "标准器温度包含因子", "2");
+            string humidityCoverage = Get(task, "标准器湿度包含因子", "2");
+            string[][] display =
+            {
+                new[] { "校准参数", "温度 / ℃", "湿度 / %RH" },
+                new[] { "设定值", Get(task, "设定温度(℃)", "—"), hasHumidity ? Get(task, "设定湿度(%RH)", "—") : "—" },
+                new[] { "上偏差", Value("温度上偏差"), HumidityValue("湿度上偏差") },
+                new[] { "下偏差", Value("温度下偏差"), HumidityValue("湿度下偏差") },
+                new[] { "均匀度", Value("温度均匀度"), HumidityValue("湿度均匀度") },
+                new[] { "波动度", Value("温度波动度"), HumidityValue("湿度波动度") },
+                new[]
+                {
+                    "校准不确定度",
+                    $"{Value("温度扩展不确定度")}（k={temperatureCoverage}）",
+                    hasHumidity ? $"{Value("湿度扩展不确定度")}（k={humidityCoverage}）" : "—"
+                }
+            };
+            return FormalTable(display, new[] { 3600, 2880, 2880 }, headerRow: true, centeredColumns: new HashSet<int> { 1, 2 });
+        }
+
+        /// <summary>把测点编号格式化为证书中的 T1、T2 列表。</summary>
+        private static string FormatPointList(IEnumerable<int> pointNumbers)
+        {
+            string[] points = pointNumbers.Select(index => $"T{index}").ToArray();
+            return points.Length == 0 ? "—" : string.Join("、", points);
+        }
+
+        /// <summary>安全解析任务快照中的正整数；空值或异常值按零处理。</summary>
+        private static int ParsePositiveInt(string value) =>
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0
+                ? parsed
+                : 0;
 
         /// <summary>按结果项目和评定点汇总不确定度 CSV，避免在证书中重复列出每个分量。</summary>
         private static W.Table? BuildUncertaintySummaryTable(IReadOnlyList<string[]> rows)
@@ -359,9 +751,9 @@ namespace UpperComInspectionInstrument2022.Services
                 display.Add(new[]
                 {
                     key.Replace("|", " / ", StringComparison.Ordinal),
-                    Cell(row, columns["合成标准不确定度uc"]),
+                    FormatResultValue(Cell(row, columns["合成标准不确定度uc"])),
                     Cell(row, columns["包含因子k"]),
-                    Cell(row, columns["扩展不确定度U"]),
+                    FormatResultValue(Cell(row, columns["扩展不确定度U"])),
                     Cell(row, columns["合成依据"])
                 });
             }
@@ -379,6 +771,22 @@ namespace UpperComInspectionInstrument2022.Services
                 new[] { Get(task, "校准员", "________________"), Get(task, "核验员", "________________"), "________________" },
                 new[] { "日期：________________", "日期：________________", "日期：________________" }
             }, new[] { 3120, 3120, 3120 }, headerRow: true, centeredColumns: new HashSet<int> { 0, 1, 2 });
+        }
+
+        /// <summary>
+        /// 在全部校准结果之后追加证书声明和签字区。
+        /// 集中使用该方法可防止不同规范的报告再次把签发内容插到结果正文之前。
+        /// </summary>
+        private static void AppendCertificateClosing(
+            W.Body body,
+            string heading,
+            string declaration,
+            IReadOnlyDictionary<string, string> task)
+        {
+            body.Append(Heading(heading));
+            body.Append(Paragraph(declaration, "Normal"));
+            //body.Append(Paragraph("签发状态：待审核", "Status", W.JustificationValues.Center));
+            body.Append(SignatureTable(task));
         }
 
         /// <summary>按给定列宽创建固定 DXA 几何表格，确保 Word/WPS 和渲染器中的布局一致。</summary>
@@ -434,8 +842,70 @@ namespace UpperComInspectionInstrument2022.Services
             return table;
         }
 
+        /// <summary>
+        /// 创建 JJF 附录表式使用的黑白细线表格。
+        /// 与应用界面的蓝灰视觉样式分离，保证打印、复印和归档时接近规范参考格式。
+        /// </summary>
+        private static W.Table FormalTable(
+            IReadOnlyList<string[]> rows,
+            IReadOnlyList<int> widths,
+            bool headerRow = false,
+            ISet<int>? labelColumns = null,
+            ISet<int>? centeredColumns = null)
+        {
+            if (widths.Sum() != ContentWidth) throw new InvalidDataException("Word 表格列宽总和必须等于正文宽度。");
+            W.Table table = new();
+            table.Append(new W.TableProperties(
+                new W.TableWidth { Type = W.TableWidthUnitValues.Dxa, Width = ContentWidth.ToString(CultureInfo.InvariantCulture) },
+                new W.TableIndentation { Type = W.TableWidthUnitValues.Dxa, Width = TableIndent },
+                new W.TableBorders(
+                    BlackBorder<W.TopBorder>(), BlackBorder<W.LeftBorder>(), BlackBorder<W.BottomBorder>(), BlackBorder<W.RightBorder>(),
+                    BlackBorder<W.InsideHorizontalBorder>(), BlackBorder<W.InsideVerticalBorder>()),
+                new W.TableLayout { Type = W.TableLayoutValues.Fixed },
+                new W.TableCellMarginDefault(
+                    new W.TopMargin { Width = "60", Type = W.TableWidthUnitValues.Dxa },
+                    new W.TableCellLeftMargin { Width = 90, Type = W.TableWidthValues.Dxa },
+                    new W.BottomMargin { Width = "60", Type = W.TableWidthUnitValues.Dxa },
+                    new W.TableCellRightMargin { Width = 90, Type = W.TableWidthValues.Dxa })));
+            table.Append(new W.TableGrid(widths.Select(width => new W.GridColumn { Width = width.ToString(CultureInfo.InvariantCulture) })));
+
+            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                W.TableRow row = new();
+                if (headerRow && rowIndex == 0)
+                    row.AppendChild(new W.TableRowProperties(new W.TableHeader { Val = W.OnOffOnlyValues.On }));
+                for (int column = 0; column < widths.Count; column++)
+                {
+                    bool emphasized = headerRow && rowIndex == 0 || labelColumns?.Contains(column) == true;
+                    W.RunProperties runProperties = new();
+                    if (emphasized) runProperties.Append(new W.Bold(), new W.BoldComplexScript());
+                    W.ParagraphProperties paragraphProperties = new(
+                        new W.ParagraphStyleId { Val = "Normal" },
+                        new W.SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = W.LineSpacingRuleValues.Auto });
+                    if (centeredColumns?.Contains(column) == true || headerRow && rowIndex == 0)
+                        paragraphProperties.Append(new W.Justification { Val = W.JustificationValues.Center });
+                    row.Append(new W.TableCell(
+                        new W.TableCellProperties(
+                            new W.TableCellWidth { Type = W.TableWidthUnitValues.Dxa, Width = widths[column].ToString(CultureInfo.InvariantCulture) },
+                            new W.TableCellVerticalAlignment { Val = W.TableVerticalAlignmentValues.Center }),
+                        new W.Paragraph(paragraphProperties,
+                            new W.Run(runProperties,
+                                new W.Text(column < rows[rowIndex].Length ? rows[rowIndex][column] : string.Empty)
+                                { Space = SpaceProcessingModeValues.Preserve }))));
+                }
+                table.Append(row);
+            }
+            return table;
+        }
+
         /// <summary>创建统一的浅蓝灰细线边框。</summary>
         private static T Border<T>() where T : W.BorderType, new() => new() { Val = W.BorderValues.Single, Color = "CBD5E1", Size = 6U };
+
+        /// <summary>创建适合正式记录打印的黑色细线边框。</summary>
+        private static T BlackBorder<T>() where T : W.BorderType, new() => new() { Val = W.BorderValues.Single, Color = "000000", Size = 6U };
+
+        /// <summary>关闭指定表格边框。</summary>
+        private static T NilBorder<T>() where T : W.BorderType, new() => new() { Val = W.BorderValues.Nil };
 
         /// <summary>重新打开生成文件并检查文档结构及关键业务章节。</summary>
         private static void ValidateCertificate(string path)
@@ -452,10 +922,38 @@ namespace UpperComInspectionInstrument2022.Services
                 throw new InvalidDataException("生成的 Word 证书缺少正文。");
             if (mainPart.StyleDefinitionsPart == null || mainPart.HeaderParts.Count() != 1 || mainPart.FooterParts.Count() != 1)
                 throw new InvalidDataException("生成的 Word 证书缺少正文、样式、页眉或页脚。");
-            string text = body.InnerText;
-            string[] requiredText = { "校准证书", "作业与被校设备信息", "标准器及溯源信息", "校准条件与执行方案", "校准结果", "测量不确定度摘要", "声明与签发" };
-            if (requiredText.Any(required => !text.Contains(required, StringComparison.Ordinal)) || body.Descendants<W.Table>().Count() < 5)
+            string text = body.InnerText + string.Concat(mainPart.HeaderParts.Select(part => part.Header?.InnerText));
+            string normalized = text.Replace(" ", string.Empty, StringComparison.Ordinal);
+            bool isJjf1101 = normalized.Contains("JJF1101", StringComparison.Ordinal);
+            bool isJjf1376 = normalized.Contains("JJF1376", StringComparison.Ordinal);
+            string[] requiredText = isJjf1101
+                ? new[]
+                {
+                    "校准证书", "基本信息", "校准依据", "声明与签发", "环境试验设备校准证书内页",
+                    "校准结果", "布点示意图", "图B1", "设定值", "上偏差", "下偏差", "均匀度", "波动度", "校准不确定度"
+                }
+                : isJjf1376
+                    ? new[]
+                    {
+                        "校准证书", "基本信息", "校准依据", "声明与签发", "箱式电阻炉校准结果",
+                        "外观检查", "炉温均匀度", "炉温稳定度", "炉温偏差", "炉内最大温差", "扩展不确定度"/*, "以下空白"*/
+                    }
+                : new[] { "校准证书", "基本信息", "校准依据、测量标准与环境", "校准结果", "声明与签发" };
+            if (requiredText.Any(required => !normalized.Contains(required.Replace(" ", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal)) ||
+                body.Descendants<W.Table>().Count() < 4)
                 throw new InvalidDataException("生成的 Word 证书章节或表格结构不完整。");
+
+            // 证书的声明和签发必须在规范结果正文之后，批准人签字区必须位于声明之后。
+            if (isJjf1101 || isJjf1376)
+            {
+                string resultAnchor = isJjf1101 ? "校准不确定度" : "扩展不确定度";
+                int resultIndex = normalized.LastIndexOf(resultAnchor, StringComparison.Ordinal);
+                int closingIndex = normalized.LastIndexOf("声明与签发", StringComparison.Ordinal);
+                int approvalIndex = normalized.LastIndexOf("批准人", StringComparison.Ordinal);
+                if (resultIndex < 0 || closingIndex <= resultIndex || approvalIndex <= closingIndex)
+                    throw new InvalidDataException("Word 证书的声明或签发区域未置于全部校准结果之后。");
+            }
+
             OpenXmlValidator validator = new();
             ValidationErrorInfo[] errors = validator.Validate(document).Take(5).ToArray();
             if (errors.Length > 0)
@@ -486,6 +984,14 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>安全取得数组单元格。</summary>
         private static string Cell(string[] row, int index) => index >= 0 && index < row.Length ? row[index] : string.Empty;
+        /// <summary>将新旧归档中的最终结果统一格式化为三位小数，非数值文本保持原样。</summary>
+        private static string FormatResultValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "—";
+            return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) && double.IsFinite(number)
+                ? number.ToString("0.000", CultureInfo.InvariantCulture)
+                : value;
+        }
         /// <summary>安全取得字典字段，空值使用回退文本。</summary>
         private static string Get(IReadOnlyDictionary<string, string> source, string key, string fallback = "") =>
             source.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value) ? value : fallback;
@@ -498,9 +1004,22 @@ namespace UpperComInspectionInstrument2022.Services
         private static string BuildEnvironment(IReadOnlyDictionary<string, string> task) =>
             $"{AppendUnit(Get(task, "环境温度(℃)"), "℃")} / {AppendUnit(Get(task, "环境湿度(%RH)"), "%RH")} / {AppendUnit(Get(task, "环境气压(kPa)"), "kPa")}";
 
+        /// <summary>按本次校准项目组合温度、湿度设定值，避免无湿度任务出现无意义空栏。</summary>
+        private static string BuildJjf1101SetPoint(IReadOnlyDictionary<string, string> task)
+        {
+            string temperature = AppendUnit(Get(task, "设定温度(℃)"), "℃");
+            return ParsePositiveInt(Get(task, "湿度测点数", "0")) > 0
+                ? $"温度 {temperature}；湿度 {AppendUnit(Get(task, "设定湿度(%RH)"), "%RH")}"
+                : $"温度 {temperature}";
+        }
+
         /// <summary>组合长、宽、高工作区尺寸。</summary>
         private static string BuildWorkZone(IReadOnlyDictionary<string, string> task) =>
             $"{Get(task, "工作区长度(mm)", "-")} × {Get(task, "工作区宽度(mm)", "-")} × {Get(task, "工作区高度(mm)", "-")} mm";
+
+        /// <summary>组合 JJF 1376 原始记录要求的炉膛 L、W、H 尺寸。</summary>
+        private static string BuildFurnaceChamber(IReadOnlyDictionary<string, string> task) =>
+            $"L={Get(task, "炉膛长度(mm)", "-")} mm；W={Get(task, "炉膛宽度(mm)", "-")} mm；H={Get(task, "炉膛高度(mm)", "-")} mm";
 
         /// <summary>组合温度或湿度点数和中心点。</summary>
         private static string BuildPointSummary(IReadOnlyDictionary<string, string> task, string type)

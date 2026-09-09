@@ -31,9 +31,11 @@ Assert(CalibrationStandardRuleService.MatchesVolumeClass(0, 0, 2) &&
        !CalibrationStandardRuleService.AllowsJjf1101PointCountAdjustment(50) &&
        CalibrationStandardRuleService.AllowsJjf1101PointCountAdjustment(50.001),
     "JJF1101 volume linkage and extreme-volume boundaries");
-Assert(CalibrationStandardRuleService.GetCalibrationPointRuleText(smallChamber, 1).Contains("下限") &&
-       CalibrationStandardRuleService.GetCalibrationPointRuleText(smallChamber, 1).Contains("中间点"),
-    "JJF1101 calibration point strategy");
+Assert(smallChamber.CalibrationPointOptions.Length == 2 &&
+       smallChamber.CalibrationPointOptions[0].Contains("常用") &&
+       smallChamber.CalibrationPointOptions[1].Contains("客户指定") &&
+       !smallChamber.CalibrationPointOptions.Any(option => option.Contains("逐工况")),
+    "JJF1101 exposes only common and customer-specified calibration points");
 
 CalibrationStandardRule largeChamber = CalibrationStandardRuleService.GetRule(0, 1, true);
 Assert(largeChamber.TemperaturePointCount == 15 && largeChamber.HumidityPointCount == 4 && largeChamber.TemperatureCenterPoint == 15, "JJF1101 large plan");
@@ -53,9 +55,91 @@ Assert(smallFurnace.SupportsCustomPointLayout && smallFurnace.CustomPointCountMo
 Assert(CalibrationStandardRuleService.MatchesVolumeClass(1, 0, 0.15) &&
        CalibrationStandardRuleService.MatchesVolumeClass(1, 1, 0.150001),
     "JJF1376 measurement-zone volume linkage");
-Assert(smallFurnace.CalibrationPointOptions[1].Contains("最低和最高") &&
-       !smallFurnace.CalibrationPointOptions[1].Contains("中间"),
-    "JJF1376 calibration temperature strategy");
+Assert(smallFurnace.CalibrationPointOptions.Length == 2 &&
+       smallFurnace.CalibrationPointOptions[0].Contains("常用") &&
+       smallFurnace.CalibrationPointOptions[1].Contains("客户指定") &&
+       !smallFurnace.CalibrationPointOptions.Any(option => option.Contains("逐工况")),
+    "JJF1376 exposes only common and customer-specified calibration temperatures");
+
+string accountTestRoot = Path.Combine(
+    Path.GetTempPath(), "UpperComInspectionInstrument2022-account-test", Guid.NewGuid().ToString("N"));
+LocalAccountService accountService = new(accountTestRoot);
+Assert(accountService.TryHasAccounts(out bool hasAccounts, out _) && !hasAccounts,
+    "fresh local account store starts empty");
+Assert(!accountService.TryRegister("a", string.Empty, "Password123", out _, out string invalidUserError) &&
+       invalidUserError.Contains("2～32"),
+    "local account validates user name");
+Assert(!accountService.TryRegister("tester", string.Empty, "password", out _, out string weakPasswordError) &&
+       weakPasswordError.Contains("字母和数字"),
+    "local account validates password strength");
+Assert(accountService.TryRegister(
+           "tester", "测试操作员", "Password123", out LocalUserIdentity? registeredUser, out _) &&
+       registeredUser?.DisplayName == "测试操作员",
+    "local account registration");
+string accountJson = File.ReadAllText(accountService.AccountFilePath);
+Assert(!accountJson.Contains("Password123", StringComparison.Ordinal) &&
+       accountJson.Contains("PasswordSalt", StringComparison.Ordinal) &&
+       accountJson.Contains("PasswordHash", StringComparison.Ordinal) &&
+       !accountJson.Contains("RecoveryHash", StringComparison.Ordinal),
+    "local account stores only a salted password hash and no recovery-code data");
+Assert(!accountService.TryRegister("TESTER", "重复账户", "Password456", out _, out string duplicateUserError) &&
+       duplicateUserError.Contains("已经存在"),
+    "local account names are case-insensitively unique");
+Assert(!accountService.TryAuthenticate("tester", "WrongPassword1", out _, out string wrongPasswordError) &&
+       wrongPasswordError.Contains("用户名或密码错误"),
+    "local account rejects an incorrect password");
+LocalAccountService reloadedAccountService = new(accountTestRoot);
+Assert(reloadedAccountService.TryAuthenticate(
+           "TESTER", "Password123", out LocalUserIdentity? authenticatedUser, out _) &&
+       authenticatedUser?.UserName == "tester",
+    "local account persists and authenticates after reload");
+string unrelatedLocalFile = Path.Combine(accountTestRoot, "calibration-data.csv");
+File.WriteAllText(unrelatedLocalFile, "sample,data");
+Assert(reloadedAccountService.TryReRegister(
+           "replacement", "新操作员", "ChangedPassword456", out LocalUserIdentity? replacementUser, out _) &&
+       replacementUser?.DisplayName == "新操作员",
+    "forgotten password can be handled by direct local re-registration");
+Assert(!reloadedAccountService.TryAuthenticate("tester", "Password123", out _, out _) &&
+       reloadedAccountService.TryAuthenticate(
+           "replacement", "ChangedPassword456", out authenticatedUser, out _) &&
+       File.ReadAllText(unrelatedLocalFile) == "sample,data",
+    "re-registration invalidates the old account without touching unrelated local data");
+RememberedCredentialService rememberedCredentialService = new(accountTestRoot);
+Assert(rememberedCredentialService.TrySave("replacement", "ChangedPassword456", out _) &&
+       !File.ReadAllText(rememberedCredentialService.CredentialFilePath)
+           .Contains("ChangedPassword456", StringComparison.Ordinal),
+    "remembered password is protected instead of stored as plaintext");
+Assert(rememberedCredentialService.TryLoad(
+           out bool hasRememberedCredential,
+           out string rememberedUserName,
+           out string rememberedPassword,
+           out _) &&
+       hasRememberedCredential && rememberedUserName == "replacement" &&
+       rememberedPassword == "ChangedPassword456",
+    "remembered password decrypts for the current Windows user");
+Assert(rememberedCredentialService.TryClear(out _) &&
+       !File.Exists(rememberedCredentialService.CredentialFilePath),
+    "remembered password can be cleared without deleting the account");
+UserSessionContext.SignIn(authenticatedUser!.UserName, authenticatedUser.DisplayName);
+Assert(UserSessionContext.IsAuthenticated && UserSessionContext.Current?.DisplayName == "新操作员",
+    "authenticated user session");
+UserSessionContext.SignOut();
+Assert(!UserSessionContext.IsAuthenticated, "local user sign out");
+
+string corruptAccountRoot = Path.Combine(
+    Path.GetTempPath(), "UpperComInspectionInstrument2022-account-corrupt-test", Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(corruptAccountRoot);
+string corruptAccountPath = Path.Combine(corruptAccountRoot, "users.json");
+const string corruptAccountContent = "{ account data is damaged";
+File.WriteAllText(corruptAccountPath, corruptAccountContent);
+LocalAccountService corruptAccountService = new(corruptAccountRoot);
+Assert(!corruptAccountService.TryHasAccounts(out _, out string corruptReadError) &&
+       corruptReadError.Contains(corruptAccountPath, StringComparison.Ordinal),
+    "damaged account store reports its path instead of treating the machine as unregistered");
+Assert(!corruptAccountService.TryRegister("repair-test", string.Empty, "Password123", out _, out _) &&
+       !corruptAccountService.TryReRegister("repair-test", string.Empty, "Password123", out _, out _) &&
+       File.ReadAllText(corruptAccountPath) == corruptAccountContent,
+    "registration and re-registration refuse to overwrite a damaged account store");
 
 string generatedResourceName = typeof(CalibrationStandardRuleService).Assembly.GetManifestResourceNames()
     .Single(name => name.EndsWith(".g.resources", StringComparison.OrdinalIgnoreCase));
@@ -72,6 +156,8 @@ Assert(embeddedResourceKeys.Contains("resources/standards/jjf1376-figure1.png") 
 CalibrationStandardRule largeFurnace = CalibrationStandardRuleService.GetRule(1, 1, false);
 Assert(largeFurnace.TemperaturePointCount == 9 && largeFurnace.TemperatureCenterPoint == 9, "JJF1376 large plan");
 
+SystemSettingsContext.LaboratoryName = "测试校准实验室";
+SystemSettingsContext.LaboratoryAddress = "测试市质量路1号";
 SystemSettingsContext.StandardName = "温湿度巡检仪";
 SystemSettingsContext.CertificateNumber = "CERT-001";
 SystemSettingsContext.ValidityDate = DateTime.Today.AddDays(1);
@@ -146,10 +232,14 @@ static MeasurementSnapshot Snapshot(params double[] temperatures) => new()
         Channel = index + 1,
         Type = ChannelType.Temperature,
         Value = value,
+        RawValue = value,
         IsValid = true
     }).ToList(),
     ValidChannelCount = temperatures.Length
 };
+
+
+
 
 static MeasurementSnapshot SnapshotWithHumidity(double[] temperatures, double[] humidities) => new()
 {
@@ -160,6 +250,7 @@ static MeasurementSnapshot SnapshotWithHumidity(double[] temperatures, double[] 
         Type = ChannelType.Temperature,
         Role = ChannelRole.PrimaryTemperature,
         Value = value,
+        RawValue = value,
         IsValid = true
     }).Concat(humidities.Select((value, index) => new InspectionChannelData
     {
@@ -167,6 +258,7 @@ static MeasurementSnapshot SnapshotWithHumidity(double[] temperatures, double[] 
         Type = ChannelType.Humidity,
         Role = ChannelRole.Humidity,
         Value = value,
+        RawValue = value,
         IsValid = true
     })).ToList(),
     ValidChannelCount = temperatures.Length + humidities.Length
@@ -174,6 +266,8 @@ static MeasurementSnapshot SnapshotWithHumidity(double[] temperatures, double[] 
 
 CalibrationTaskContext.StandardIndex = 0;
 CalibrationTaskContext.CalibrationTypeIndex = 0;
+CalibrationTaskContext.VolumeIndex = 0;
+CalibrationTaskContext.PointLayoutModeIndex = 0;
 CalibrationTaskContext.TemperaturePointCount = 2;
 CalibrationTaskContext.PlannedCount = 2;
 CalibrationTaskContext.SetTemperature = 20;
@@ -270,22 +364,24 @@ Assert(centerIsMinimumResult.FurnaceUniformityLower == 0 && centerIsMinimumResul
 string storageTestRoot = Path.Combine(Path.GetTempPath(), "UpperComInspectionInstrument2022-storage-test", Guid.NewGuid().ToString("N"));
 CalibrationTaskContext.StandardIndex = 0;
 CalibrationTaskContext.CalibrationTypeIndex = 0;
-CalibrationTaskContext.TemperaturePointCount = 2;
+CalibrationTaskContext.TemperaturePointCount = 9;
 CalibrationTaskContext.HumidityPointCount = 0;
-CalibrationTaskContext.TemperatureCenterPoint = 1;
+CalibrationTaskContext.TemperatureCenterPoint = 5;
 CalibrationTaskContext.PlannedCount = 2;
 CalibrationTaskContext.SamplingIntervalSeconds = 120;
 CalibrationTaskContext.SetTemperature = 20;
 CalibrationTaskContext.EquipmentName = "测试设备,一号";
 CalibrationTaskContext.EquipmentSerialNumber = "TEST-001";
+CalibrationTaskContext.ReferencedLaboratoryName = "测试校准实验室";
+CalibrationTaskContext.ReferencedLaboratoryAddress = "测试市质量路1号";
 CalibrationTaskContext.ReferencedCertificateNumber = "CERT-001";
 CalibrationTaskContext.ReferencedMeasuringInstrumentClass = 0.02;
 CalibrationTaskContext.ReferencedThermocoupleGrade = "廉金属1级";
 CalibrationRunContext.Begin();
 CalibrationFileStorageService testStorage = new(storageTestRoot);
 Assert(testStorage.TryBeginJob(out string beginStorageError), "storage begin: " + beginStorageError);
-CalibrationSampleRecord storageRecord1 = CalibrationRunContext.Add(Snapshot(19, 21), 20, null);
-CalibrationSampleRecord storageRecord2 = CalibrationRunContext.Add(Snapshot(20, 22), 20, null);
+CalibrationSampleRecord storageRecord1 = CalibrationRunContext.Add(Snapshot(19, 20, 21, 22, 20, 18, 19, 20, 21), 20, null);
+CalibrationSampleRecord storageRecord2 = CalibrationRunContext.Add(Snapshot(20, 21, 22, 23, 20, 19, 20, 21, 22), 20, null);
 Assert(testStorage.TryAppendSample(storageRecord1, out string appendStorageError1), "storage append 1: " + appendStorageError1);
 Assert(testStorage.TryAppendSample(storageRecord2, out string appendStorageError2), "storage append 2: " + appendStorageError2);
 CalibrationResultSummary storageResult = CalibrationResultCalculator.Calculate();
@@ -302,15 +398,20 @@ string sampleCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "正式采
 Assert(sampleCsv.Contains("\"温度1(℃)\"") && sampleCsv.Contains("\"19\"") && sampleCsv.Contains("\"22\""),
     "wide sample CSV contains dynamic channel matrix");
 string rawCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "正式采样原始通道.csv"));
-Assert(rawCsv.Contains("\"修正前原始值\"") && rawCsv.Split("\"温度\"").Length - 1 == 4,
+Assert(rawCsv.Contains("\"修正前原始值\"") && rawCsv.Split("\"温度\"").Length - 1 == 18,
     "raw channel CSV contains one row per formal channel");
+string resultCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "校准结果.csv"));
+Assert(resultCsv.Contains("\"3.000\"") && resultCsv.Contains("\"-2.000\"") &&
+       resultCsv.Contains("\"4.000\"") && resultCsv.Contains("\"0.500\""),
+    "final calibration result CSV uses fixed three-decimal precision");
 string uncertaintyCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "不确定度分量.csv"));
 Assert(uncertaintyCsv.Contains("\"标准不确定度ui\"") && uncertaintyCsv.Contains("\"合成标准不确定度uc\"") &&
        uncertaintyCsv.Contains("\"u1\"") && uncertaintyCsv.Contains("JJF 1101-2019 附录C"),
     "uncertainty CSV contains auditable components, synthesis and standard basis");
 string taskCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "任务信息.csv"));
-Assert(taskCsv.Contains("\"测温仪器级别\"") && taskCsv.Contains("\"热电偶等级\"") && taskCsv.Contains("\"廉金属1级\""),
-    "task snapshot CSV preserves JJF1376 standard capability fields for traceability");
+Assert(taskCsv.Contains("\"测温仪器级别\"") && taskCsv.Contains("\"热电偶等级\"") && taskCsv.Contains("\"廉金属1级\"") &&
+       taskCsv.Contains("\"实验室名称\"") && taskCsv.Contains("\"测试校准实验室\""),
+    "task snapshot CSV preserves laboratory identity and JJF1376 standard capability fields for traceability");
 IReadOnlyList<CalibrationArchiveSummary> storageHistory = testStorage.LoadHistory("测试设备", "JJF 1101-2019", "已完成");
 Assert(storageHistory.Count == 1 && storageHistory[0].SampleProgress == "2/2" && storageHistory[0].Device == "测试设备,一号",
     "history scans quoted CSV summaries without a database");
@@ -324,8 +425,21 @@ using (ZipArchive excelArchive = ZipFile.OpenRead(generatedExcelPath))
         "Excel report contains workbook and five worksheets");
     using StreamReader workbookReader = new(excelArchive.GetEntry("xl/workbook.xml")!.Open());
     string workbookXml = workbookReader.ReadToEnd();
-    Assert(workbookXml.Contains("不确定度分量") && workbookXml.Contains("任务与结果") && workbookXml.Contains("任务快照"),
-        "Excel workbook exposes uncertainty budget alongside result and task snapshot");
+    Assert(workbookXml.Contains("校准记录") && workbookXml.Contains("不确定度分量") && workbookXml.Contains("任务快照") &&
+           workbookXml.Split("state=\"hidden\"").Length - 1 == 4,
+        "JJF1101 workbook exposes one Appendix A record sheet and hides four audit-support sheets");
+    using StreamReader recordReader = new(excelArchive.GetEntry("xl/worksheets/sheet1.xml")!.Open());
+    string recordXml = recordReader.ReadToEnd();
+    Assert(recordXml.Contains("1 A") && recordXml.Contains("5 O") && recordXml.Contains("8 B") &&
+           recordXml.Contains("图 B1  布点示意图") && recordXml.Split(">门<").Length - 1 == 3,
+        "JJF1101 raw record contains the Figure B1 9-point mapping and three door directions");
+    Assert(recordXml.Contains("3.000 ℃") && recordXml.Contains("-2.000 ℃") &&
+           recordXml.Contains("4.000 ℃") && recordXml.Contains("0.500 ℃"),
+        "JJF1101 Excel report presents final calibration results with three decimals");
+    using StreamReader stylesReader = new(excelArchive.GetEntry("xl/styles.xml")!.Open());
+    string stylesXml = stylesReader.ReadToEnd();
+    Assert(stylesXml.Contains("borders count=\"11\""),
+        "JJF1101 layout uses directional border styles to draw three equipment sections");
 }
 Assert(CalibrationWordCertificateService.Default.TryGenerate(storageJobDirectory, out string generatedWordPath, out string generatedWordError),
     "Word certificate generation: " + generatedWordError);
@@ -339,9 +453,19 @@ using (ZipArchive wordArchive = ZipFile.OpenRead(generatedWordPath))
         "Word certificate contains document, styles, header and footer parts");
     using StreamReader documentReader = new(wordArchive.GetEntry("word/document.xml")!.Open());
     string documentXml = documentReader.ReadToEnd();
-    Assert(documentXml.Contains("校准证书") && documentXml.Contains("校准结果") &&
-           documentXml.Contains("TEST-001") && documentXml.Contains("待审核签发"),
-        "Word certificate contains archived task identity, result section and review status");
+    int jjf1101ResultIndex = documentXml.LastIndexOf("校准不确定度", StringComparison.Ordinal);
+    int jjf1101ClosingIndex = documentXml.LastIndexOf("声明与签发", StringComparison.Ordinal);
+    int jjf1101ApprovalIndex = documentXml.LastIndexOf("批准人", StringComparison.Ordinal);
+    Assert(documentXml.Contains("校准证书") && documentXml.Contains("测试校准实验室") &&
+           documentXml.Contains("环境试验设备校准证书内页") && documentXml.Contains("布点示意图") && documentXml.Contains("图 B1") &&
+           documentXml.Contains("上偏差") &&
+           documentXml.Contains("下偏差") && documentXml.Contains("均匀度") &&
+           documentXml.Contains("波动度") && documentXml.Contains("校准不确定度") &&
+           documentXml.Contains("TEST-001") && documentXml.Contains("3.000") &&
+           documentXml.Contains("-2.000") && documentXml.Contains("0.500")/* && documentXml.Contains("签发状态：待审核")*/,
+        "Word certificate follows JJF1101 Appendix B and preserves archived identity and review status");
+    Assert(jjf1101ResultIndex >= 0 && jjf1101ClosingIndex > jjf1101ResultIndex && jjf1101ApprovalIndex > jjf1101ClosingIndex,
+        "JJF1101 Word declaration and issuance block follows all calibration results");
 }
 Assert(CalibrationPdfArchiveService.Default.TryGenerate(storageJobDirectory, out string generatedPdfPath, out string generatedPdfError),
     "PDF archive generation: " + generatedPdfError);
@@ -353,6 +477,74 @@ Assert(storageHistory[0].ExcelReportStatus == "已生成" &&
        storageHistory[0].WordCertificateStatus == "已生成" &&
        storageHistory[0].PdfArchiveStatus == "已生成",
     "history report status reflects the generated files on disk");
+
+// JJF 1376 报告回归：附录 A 用 Excel 记录逐次值/修正值/实际温度，附录 B 用 Word 只展示最终结果。
+string furnaceReportRoot = Path.Combine(storageTestRoot, "jjf1376-report-check");
+CalibrationTaskContext.StandardIndex = 1;
+CalibrationTaskContext.CalibrationTypeIndex = 0;
+CalibrationTaskContext.PointLayoutModeIndex = 0;
+CalibrationTaskContext.TemperaturePointCount = 5;
+CalibrationTaskContext.HumidityPointCount = 0;
+CalibrationTaskContext.TemperatureCenterPoint = 3;
+CalibrationTaskContext.PlannedCount = 2;
+CalibrationTaskContext.SamplingIntervalSeconds = 180;
+CalibrationTaskContext.SetTemperature = 800;
+CalibrationTaskContext.AppearanceCheckIndex = 1;
+CalibrationTaskContext.FurnaceChamberLengthMm = 500;
+CalibrationTaskContext.FurnaceChamberWidthMm = 400;
+CalibrationTaskContext.FurnaceChamberHeightMm = 300;
+CalibrationTaskContext.WorkZoneLengthMm = 300;
+CalibrationTaskContext.WorkZoneWidthMm = 240;
+CalibrationTaskContext.WorkZoneHeightMm = 180;
+CalibrationRunContext.Begin();
+CalibrationFileStorageService furnaceStorage = new(furnaceReportRoot);
+Assert(furnaceStorage.TryBeginJob(out string furnaceBeginError), "JJF1376 report job begin: " + furnaceBeginError);
+CalibrationSampleRecord furnaceRecord1 = CalibrationRunContext.Add(Snapshot(801, 802, 800, 799, 800), null, null);
+CalibrationSampleRecord furnaceRecord2 = CalibrationRunContext.Add(Snapshot(802, 803, 801, 800, 801), null, null);
+Assert(furnaceStorage.TryAppendSample(furnaceRecord1, out string furnaceAppendError1), "JJF1376 append sample 1: " + furnaceAppendError1);
+Assert(furnaceStorage.TryAppendSample(furnaceRecord2, out string furnaceAppendError2), "JJF1376 append sample 2: " + furnaceAppendError2);
+CalibrationResultSummary furnaceReportResult = CalibrationResultCalculator.Calculate();
+Assert(furnaceStorage.TryCompleteJob(furnaceReportResult, out string furnaceCompleteError), "JJF1376 report job complete: " + furnaceCompleteError);
+string furnaceJobDirectory = furnaceStorage.CurrentJobDirectory!;
+Assert(CalibrationExcelReportService.Default.TryGenerate(furnaceJobDirectory, out string furnaceExcelPath, out string furnaceExcelError),
+    "JJF1376 Appendix A Excel generation: " + furnaceExcelError);
+using (ZipArchive furnaceExcelArchive = ZipFile.OpenRead(furnaceExcelPath))
+{
+    using StreamReader workbookReader = new(furnaceExcelArchive.GetEntry("xl/workbook.xml")!.Open());
+    string workbookXml = workbookReader.ReadToEnd();
+    using StreamReader recordReader = new(furnaceExcelArchive.GetEntry("xl/worksheets/sheet1.xml")!.Open());
+    string recordXml = recordReader.ReadToEnd();
+    Assert(workbookXml.Contains("校准记录") && workbookXml.Split("state=\"hidden\"").Length - 1 == 4 &&
+           recordXml.Contains("箱式电阻炉校准记录") && recordXml.Contains("修正值") && recordXml.Contains("实际温度") &&
+           recordXml.Contains("炉膛尺寸") && recordXml.Contains("测温区尺寸") && recordXml.Contains("炉内最大温差"),
+        "JJF1376 Excel follows Appendix A and keeps audit sheets hidden");
+}
+Assert(CalibrationWordCertificateService.Default.TryGenerate(furnaceJobDirectory, out string furnaceWordPath, out string furnaceWordError),
+    "JJF1376 Appendix B Word generation: " + furnaceWordError);
+using (ZipArchive furnaceWordArchive = ZipFile.OpenRead(furnaceWordPath))
+{
+    using StreamReader documentReader = new(furnaceWordArchive.GetEntry("word/document.xml")!.Open());
+    string documentXml = documentReader.ReadToEnd();
+    int jjf1376ResultIndex = documentXml.LastIndexOf("扩展不确定度", StringComparison.Ordinal);
+    int jjf1376ClosingIndex = documentXml.LastIndexOf("声明与签发", StringComparison.Ordinal);
+    int jjf1376ApprovalIndex = documentXml.LastIndexOf("批准人", StringComparison.Ordinal);
+    Assert(documentXml.Contains("箱式电阻炉校准结果") && documentXml.Contains("外观检查") &&
+           documentXml.Contains("炉温均匀度") && documentXml.Contains("炉温稳定度") &&
+           documentXml.Contains("炉温偏差") && documentXml.Contains("炉内最大温差") &&
+           documentXml.Contains("扩展不确定度")/* && documentXml.Contains("以下空白")*/,
+        "JJF1376 Word follows Appendix B result structure");
+    Assert(jjf1376ResultIndex >= 0 && jjf1376ClosingIndex > jjf1376ResultIndex && jjf1376ApprovalIndex > jjf1376ClosingIndex,
+        "JJF1376 Word declaration and issuance block follows all calibration results");
+}
+
+CalibrationTaskContext.StandardIndex = 0;
+CalibrationTaskContext.CalibrationTypeIndex = 0;
+CalibrationTaskContext.TemperaturePointCount = 9;
+CalibrationTaskContext.HumidityPointCount = 0;
+CalibrationTaskContext.TemperatureCenterPoint = 5;
+CalibrationTaskContext.FurnaceChamberLengthMm = null;
+CalibrationTaskContext.FurnaceChamberWidthMm = null;
+CalibrationTaskContext.FurnaceChamberHeightMm = null;
 
 string legacyJobDirectory = Path.Combine(storageTestRoot, "legacy-format-1.0");
 Directory.CreateDirectory(legacyJobDirectory);
