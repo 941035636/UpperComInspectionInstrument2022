@@ -6,17 +6,15 @@ using UpperComInspectionInstrument2022.Models;
 namespace UpperComInspectionInstrument2022.Services
 {
     /// <summary>
-    /// 一次校准作业对应一个普通文件夹，所有业务数据均保存为带 UTF-8 BOM 的 CSV。
-    /// 不使用数据库或不可见的二进制索引，确保操作人员可直接用 Excel/WPS 查看和备份。
+    /// 一次校准作业对应一个普通文件夹，业务数据均保存为带 UTF-8 BOM 的 CSV。
+    /// 不使用数据库或不可读二进制索引，确保操作人员可直接用 Excel/WPS 查看和备份。
     /// </summary>
     public sealed class CalibrationFileStorageService
     {
         private const string SummaryFileName = "作业摘要.csv";
         private const string TaskFileName = "任务信息.csv";
         private const string SampleFileName = "正式采样.csv";
-        private const string RawChannelFileName = "正式采样原始通道.csv";
         private const string ResultFileName = "校准结果.csv";
-        private const string UncertaintyFileName = "不确定度分量.csv";
         private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true);
         private static readonly UTF8Encoding Utf8WithoutBom = new(encoderShouldEmitUTF8Identifier: false);
         private readonly object _syncRoot = new();
@@ -63,7 +61,7 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>
         /// 启动时扫描遗留的“采样中”作业并标记为“已中断”。
-        /// 该方法只修改摘要状态，已经落盘的任务、正式样本和原始通道不会被删除或覆盖。
+        /// 该方法只修改摘要状态，已经落盘的任务和正式样本不会被删除或覆盖。
         /// </summary>
         public int RecoverAbandonedJobs(out string error)
         {
@@ -157,7 +155,6 @@ namespace UpperComInspectionInstrument2022.Services
 
                     WriteCsvAtomic(Path.Combine(directory, TaskFileName), BuildTaskRows());
                     WriteCsvAtomic(Path.Combine(directory, SampleFileName), new[] { BuildSampleHeader() });
-                    WriteCsvAtomic(Path.Combine(directory, RawChannelFileName), new[] { BuildRawChannelHeader() });
                     WriteSummary();
                     error = string.Empty;
                     return true;
@@ -175,7 +172,7 @@ namespace UpperComInspectionInstrument2022.Services
         }
 
         /// <summary>
-        /// 将一组正式样本同时追加到便于查看的测点矩阵 CSV 和可追溯的原始通道 CSV。
+        /// 将一组正式样本追加到面向操作人员的测点矩阵 CSV。
         /// </summary>
         public bool TryAppendSample(CalibrationSampleRecord record, out string error)
         {
@@ -195,7 +192,6 @@ namespace UpperComInspectionInstrument2022.Services
                         CalibrationTaskContext.TemperaturePointCount,
                         CalibrationTaskContext.HumidityPointCount);
                     AppendCsvRows(Path.Combine(_currentJobDirectory, SampleFileName), new[] { BuildSampleRow(record, selected) });
-                    AppendCsvRows(Path.Combine(_currentJobDirectory, RawChannelFileName), BuildRawChannelRows(record, selected));
                     _sampleCount = record.SampleNumber;
                     _statusMessage = $"已保存正式样本 {_sampleCount}/{CalibrationTaskContext.PlannedCount} 组";
                     WriteSummary();
@@ -234,7 +230,6 @@ namespace UpperComInspectionInstrument2022.Services
                 try
                 {
                     WriteCsvAtomic(Path.Combine(_currentJobDirectory, ResultFileName), BuildResultRows(result));
-                    WriteCsvAtomic(Path.Combine(_currentJobDirectory, UncertaintyFileName), BuildUncertaintyRows(result));
                     _finishedAt = DateTime.Now;
                     _status = "已完成";
                     _statusMessage = "正式样本和校准结果已完整保存";
@@ -317,6 +312,8 @@ namespace UpperComInspectionInstrument2022.Services
                 }
             }
 
+
+
             return records.OrderByDescending(item => item.StartedAt).ToList();
         }
 
@@ -342,8 +339,7 @@ namespace UpperComInspectionInstrument2022.Services
                 SampleProgress = $"{sampleCount}/{plannedCount}",
                 DirectoryPath = directory,
                 SampleFilePath = Path.Combine(directory, SampleFileName),
-                ResultFilePath = Path.Combine(directory, ResultFileName),
-                UncertaintyFilePath = Path.Combine(directory, UncertaintyFileName)
+                ResultFilePath = Path.Combine(directory, ResultFileName)
             };
         }
 
@@ -356,7 +352,7 @@ namespace UpperComInspectionInstrument2022.Services
                 new[] { "数据格式版本", "任务编号", "开始时间", "结束时间", "校准规范", "校准类型", "委托单位", "被校设备", "型号规格", "设备编号", "标准器证书编号", "设定温度(℃)", "设定湿度(%RH)", "温度测点数", "湿度测点数", "计划样本数", "已存样本数", "状态", "状态说明", "作业目录" },
                 new[]
                 {
-                    "1.1",
+                    "1.2",
                     _currentJobId,
                     FormatDateTime(_startedAt),
                     FormatDateTime(_finishedAt),
@@ -493,81 +489,6 @@ namespace UpperComInspectionInstrument2022.Services
             return row.ToArray();
         }
 
-        /// <summary>生成包含寄存器、HEX 和证书修正信息的原始通道表头。</summary>
-        private static string[] BuildRawChannelHeader() => new[]
-        {
-            "样本序号", "采样时间", "通道类型", "通道号", "测量值", "单位", "修正前原始值", "证书修正值", "是否已修正", "数据是否有效", "数据状态", "状态说明", "原始HEX", "寄存器地址1", "寄存器地址2", "寄存器值1", "寄存器值2"
-        };
-
-        /// <summary>为一组正式样本生成每通道一行的追溯数据。</summary>
-        private static IEnumerable<string[]> BuildRawChannelRows(CalibrationSampleRecord record, IEnumerable<InspectionChannelData> selected)
-        {
-            Dictionary<(ChannelRole Role, int Channel), InspectionChannelData> channels = selected
-                .GroupBy(item => (item.Role, item.Channel))
-                .ToDictionary(group => group.Key, group => group.First());
-            List<string[]> rows = new();
-            for (int index = 1; index <= CalibrationTaskContext.TemperaturePointCount; index++)
-            {
-                channels.TryGetValue((ChannelRole.PrimaryTemperature, index), out InspectionChannelData? item);
-                rows.Add(BuildRawChannelRow(record, "温度", index, item));
-            }
-            for (int index = 1; index <= CalibrationTaskContext.HumidityPointCount; index++)
-            {
-                channels.TryGetValue((ChannelRole.Humidity, index), out InspectionChannelData? item);
-                rows.Add(BuildRawChannelRow(record, "湿度", index, item));
-            }
-            return rows;
-        }
-
-        /// <summary>生成单个要求通道的原始记录；设备未返回该通道时仍输出 Missing 行。</summary>
-        private static string[] BuildRawChannelRow(CalibrationSampleRecord record, string type, int channel, InspectionChannelData? item)
-        {
-            if (item == null)
-            {
-                return new[]
-                {
-                    record.SampleNumber.ToString(CultureInfo.InvariantCulture),
-                    record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    type,
-                    channel.ToString(CultureInfo.InvariantCulture),
-                    string.Empty,
-                    type == "温度" ? "℃" : "%RH",
-                    string.Empty,
-                    string.Empty,
-                    "否",
-                    "否",
-                    "Missing",
-                    "任务要求通道未返回",
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty
-                };
-            }
-
-            return new[]
-            {
-                record.SampleNumber.ToString(CultureInfo.InvariantCulture),
-                record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                type,
-                item.Channel.ToString(CultureInfo.InvariantCulture),
-                FormatNumber(item.Value),
-                item.Unit,
-                FormatNumber(item.RawValue),
-                FormatNumber(item.CorrectionValue),
-                item.HasAppliedCorrection ? "是" : "否",
-                item.IsValid ? "是" : "否",
-                item.DataStatus.ToString(),
-                item.Status,
-                item.RawHex,
-                $"0x{item.RegisterAddress1:X4}",
-                $"0x{item.RegisterAddress2:X4}",
-                $"0x{item.Register1:X4}",
-                $"0x{item.Register2:X4}"
-            };
-        }
-
         /// <summary>根据任务规范选择对应指标，并生成校准结果 CSV 行。</summary>
         private static IEnumerable<string[]> BuildResultRows(CalibrationResultSummary result)
         {
@@ -598,52 +519,6 @@ namespace UpperComInspectionInstrument2022.Services
                     rows.Add(ResultRow("湿度均匀度", result.HumidityUniformity, "%RH", "各组最大与最小湿度差的算术平均"));
                     rows.Add(ResultRow("湿度波动度", result.HumidityFluctuation, "%RH", "各湿度测点极差一半的最大值"));
                     rows.Add(ResultRow("湿度扩展不确定度", result.HumidityExpandedUncertainty, "%RH", "按任务快照中的不确定度分量计算"));
-                }
-            }
-            return rows;
-        }
-
-        /// <summary>
-        /// 将每个结果项目的不确定度预算展开为普通 CSV：每行一个分量，并重复写入该预算的 uc、k 和 U，便于筛选和独立复核。
-        /// </summary>
-        private static IEnumerable<string[]> BuildUncertaintyRows(CalibrationResultSummary result)
-        {
-            List<string[]> rows = new()
-            {
-                new[]
-                {
-                    "结果项目", "评定点", "分量序号", "符号", "不确定度来源", "类别", "分布",
-                    "输入量", "单位", "除数", "除数表达式", "标准不确定度ui", "灵敏系数ci", "贡献ci×ui",
-                    "合成标准不确定度uc", "包含因子k", "扩展不确定度U", "分量依据", "合成依据"
-                }
-            };
-            foreach (UncertaintyBudgetSummary budget in result.UncertaintyBudgets)
-            {
-                for (int index = 0; index < budget.Components.Count; index++)
-                {
-                    UncertaintyComponentDetail component = budget.Components[index];
-                    rows.Add(new[]
-                    {
-                        budget.ResultItem,
-                        budget.EvaluationPoint,
-                        (index + 1).ToString(CultureInfo.InvariantCulture),
-                        component.Symbol,
-                        component.Source,
-                        component.Category,
-                        component.Distribution,
-                        FormatNumber(component.InputValue),
-                        component.Unit,
-                        FormatNumber(component.Divisor),
-                        component.DivisorExpression,
-                        FormatNumber(component.StandardUncertainty),
-                        FormatNumber(component.SensitivityCoefficient),
-                        FormatNumber(component.Contribution),
-                        FormatNumber(budget.CombinedStandardUncertainty),
-                        FormatNumber(budget.CoverageFactor),
-                        FormatNumber(budget.ExpandedUncertainty),
-                        component.Basis,
-                        budget.Basis
-                    });
                 }
             }
             return rows;
@@ -787,7 +662,6 @@ namespace UpperComInspectionInstrument2022.Services
         public string DirectoryPath { get; init; } = string.Empty;
         public string SampleFilePath { get; init; } = string.Empty;
         public string ResultFilePath { get; init; } = string.Empty;
-        public string UncertaintyFilePath { get; init; } = string.Empty;
         public string ExcelReportFilePath => Path.Combine(DirectoryPath, "报告", "校准原始记录.xlsx");
         /// <summary>供历史列表直接显示 Excel 是否已经生成。</summary>
         public string ExcelReportStatus => File.Exists(ExcelReportFilePath) ? "已生成" : "未生成";

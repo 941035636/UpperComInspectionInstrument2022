@@ -94,7 +94,7 @@
                     <StackPanel><TextBlock Text="当前测量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="LiveValueSummaryTextBlock" Text="等待设备数据" FontSize="10.5" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
                     <StackPanel Grid.Column="1"><TextBlock Text="趋势预检" Style="{StaticResource CaptionText}"/><TextBlock x:Name="StabilityTextBlock" Text="未开始" FontSize="12" FontWeight="Bold" Foreground="#B45309" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
                     <StackPanel Grid.Column="2"><TextBlock Text="中心点" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CenterSummaryTextBlock" Text="点 1：- / -" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,12,0" TextWrapping="Wrap"/></StackPanel>
-                    <StackPanel Grid.Column="3"><TextBlock Text="数据质量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="QualitySummaryTextBlock" Text="任务通道 0/0" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,10,0" TextWrapping="Wrap"/></StackPanel>
+                    <StackPanel Grid.Column="3"><TextBlock Text="数据质量" Style="{StaticResource CaptionText}"/><TextBlock x:Name="QualitySummaryTextBlock" Text="任务通道 0/0" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,10,0" TextWrapping="Wrap" Cursor="Help" ToolTipService.ShowDuration="30000"/></StackPanel>
                     <StackPanel Grid.Column="4"><TextBlock Text="最新采集" Style="{StaticResource CaptionText}"/><TextBlock x:Name="CurrentTimeTextBlock" Text="-" FontSize="12" FontWeight="Bold" Foreground="#0F172A" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
                 </Grid>
             </Border>
@@ -104,17 +104,18 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,9">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <StackPanel Orientation="Horizontal"><TextBlock Text="实时趋势" FontSize="17" FontWeight="Bold" Foreground="#0F172A"/><TextBlock Text="（最近 60 组）" Style="{StaticResource CaptionText}" Margin="8,4,0,0"/></StackPanel>
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="实时趋势" FontSize="17" FontWeight="Bold" Foreground="#0F172A"/><TextBlock Text="（中心测点 · 最近 60 组）" Style="{StaticResource CaptionText}" Margin="8,4,0,0"/></StackPanel>
                         <StackPanel Grid.Column="1">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Rectangle Width="18" Height="3" Fill="#2563EB" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock Text="温度平均" Foreground="#475569" Margin="0,0,14,0"/>
-                                <Rectangle Width="18" Height="3" Fill="#059669" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock Text="湿度平均" Foreground="#475569"/>
+                                <Rectangle x:Name="TemperatureLegendLine" Width="18" Height="3" Fill="#2563EB" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock x:Name="TemperatureLegendTextBlock" Text="中心温度" Foreground="#475569" Margin="0,0,14,0"/>
+                                <Rectangle x:Name="HumidityLegendLine" Width="18" Height="3" Fill="#059669" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock x:Name="HumidityLegendTextBlock" Text="湿度 O点" Foreground="#475569" Margin="0,0,14,0"/>
+                                <TextBlock x:Name="SetPointLegendTextBlock" Text="虚线：任务设定值" Foreground="#94A3B8"/>
                             </StackPanel>
                             <TextBlock x:Name="ChartScaleTextBlock" Text="等待有效任务通道" Foreground="#64748B" FontSize="11" HorizontalAlignment="Right" Margin="0,3,0,0"/>
                         </StackPanel>
                     </Grid>
                     <Border Grid.Row="1" Background="#FBFCFE" BorderBrush="#CBD5E1" BorderThickness="1">
-                        <Canvas x:Name="MeasurementChartCanvas" SizeChanged="MeasurementChartCanvas_SizeChanged" Background="#FBFCFE"/>
+                        <Canvas x:Name="MeasurementChartCanvas" SizeChanged="MeasurementChartCanvas_SizeChanged" MouseMove="MeasurementChartCanvas_MouseMove" MouseLeave="MeasurementChartCanvas_MouseLeave" Background="#FBFCFE" ClipToBounds="True" Cursor="Cross"/>
                     </Border>
                 </Grid>
             </Border>

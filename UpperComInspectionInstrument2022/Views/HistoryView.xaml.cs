@@ -45,6 +45,7 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateActionState();
         }
 
+
         /// <summary>所选作业变化时，仅开放当前状态和本地文件确实支持的动作。</summary>
         private void HistoryDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateActionState();
 

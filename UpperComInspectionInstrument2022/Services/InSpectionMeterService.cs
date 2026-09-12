@@ -243,6 +243,11 @@ namespace UpperComInspectionInstrument2022.Services
                 bool valid = humidity
                     ? value is >= 0 and <= 100
                     : value is >= -100 and <= 200;
+                string status = valid
+                    ? "有效"
+                    : humidity
+                        ? "湿度超出 0～100 %RH 有效范围"
+                        : "湿度探头温度超出 -100～200 ℃ 有效范围";
                 result.Add(new InspectionChannelData
                 {
                     Channel = i / 2 + 1,
@@ -255,7 +260,7 @@ namespace UpperComInspectionInstrument2022.Services
                     RawBytes = new[] { (byte)(rawRegister >> 8), (byte)(rawRegister & 0xFF) },
                     RawHex = $"{rawRegister:X4}",
                     DataStatus = valid ? DataStatus.Valid : DataStatus.Invalid,
-                    Status = valid ? "有效" : "无效数据",
+                    Status = status,
                     Timestamp = timestamp,
                     AcquisitionId = acquisitionId,
                     IsValid = valid

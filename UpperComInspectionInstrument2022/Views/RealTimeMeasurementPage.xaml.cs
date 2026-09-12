@@ -6,6 +6,8 @@ using System.IO;
 using System.IO.Ports;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using UpperComInspectionInstrument2022.Communication;
@@ -34,6 +36,17 @@ namespace UpperComInspectionInstrument2022.Views
         private DateTime _nextCalibrationSampleAt;
         private DataTable _measurementTable = new DataTable();
         private string _appliedTaskSignature = string.Empty;
+        private readonly List<TrendSample> _visibleTrendSamples = new List<TrendSample>();
+        private readonly ToolTip _measurementChartToolTip = new ToolTip
+        {
+            Placement = PlacementMode.Mouse,
+            StaysOpen = true,
+            Background = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+            Foreground = Brushes.White,
+            Padding = new Thickness(9, 6, 9, 6)
+        };
+        private Rect _chartPlotArea = Rect.Empty;
+        private Line? _chartCursorLine;
 
         /// <summary>
         /// 初始化工作台，订阅共享采集服务事件，并建立点数联动、串口列表和任务状态。
@@ -46,6 +59,7 @@ namespace UpperComInspectionInstrument2022.Views
             _realtimeStorageService = RealtimeMeasurementFileStorageService.Default;
             _viewModel = new RealTimeMeasurementViewModel();
             DataContext = _viewModel;
+            _measurementChartToolTip.PlacementTarget = MeasurementChartCanvas;
 
             _acquisitionService.DataAcquired += OnDataAcquired;
             _acquisitionService.AcquisitionError += OnAcquisitionError;
@@ -486,10 +500,23 @@ namespace UpperComInspectionInstrument2022.Views
                 string prefix = channel.Type == ChannelType.Temperature ? "温度" : "湿度";
                 string columnName = prefix + channel.Channel;
                 if (_measurementTable.Columns.Contains(columnName))
-                    row[columnName] = channel.IsValid ? channel.Value.ToString("F2") : "异常";
+                    row[columnName] = FormatMeasurementMatrixValue(channel);
             }
             _measurementTable.Rows.InsertAt(row, 0);
             while (_measurementTable.Rows.Count > 200) _measurementTable.Rows.RemoveAt(_measurementTable.Rows.Count - 1);
+        }
+
+        /// <summary>
+        /// 格式化实时矩阵数值。湿度超出有效范围时仍保留设备实际解析值和正负号，
+        /// 但明确标注为异常；不可解析的通道继续显示通用异常提示。
+        /// </summary>
+        private static string FormatMeasurementMatrixValue(InspectionChannelData channel)
+        {
+            if (channel.IsValid) return channel.Value.ToString("F2");
+            if (channel.Role == ChannelRole.Humidity && double.IsFinite(channel.Value))
+                return $"{channel.Value:F2}（异常）";
+
+            return "异常";
         }
 
         /// <summary>连接或断开巡检仪串口；连接成功只表示端口已打开，收到有效响应后才显示设备已响应。</summary>
@@ -997,7 +1024,13 @@ namespace UpperComInspectionInstrument2022.Views
             foreach (InspectionChannelData channel in required)
             {
                 if (!channel.IsValid)
-                    invalidDescriptions.Add($"{GetChannelDisplayName(channel)}：{channel.Status}（{channel.RawHex}）");
+                {
+                    string parsedValue = double.IsFinite(channel.Value)
+                        ? $"{channel.Value:F2} {channel.Unit}"
+                        : "不可解析";
+                    invalidDescriptions.Add(
+                        $"{GetChannelDisplayName(channel)}：{parsedValue}，{channel.Status}（原始HEX {channel.RawHex}）");
+                }
             }
             for (int channel = 1; channel <= temperaturePointCount; channel++)
             {
@@ -1009,9 +1042,32 @@ namespace UpperComInspectionInstrument2022.Views
                 if (!required.Exists(item => item.Role == ChannelRole.Humidity && item.Channel == channel))
                     invalidDescriptions.Add($"湿度{channel}：响应中缺少该通道");
             }
-            QualitySummaryTextBlock.ToolTip = invalidDescriptions.Count == 0
+            string qualityTooltip = invalidDescriptions.Count == 0
                 ? "本次任务要求的测点均已返回有效数据。湿度探头伴随温度不计入任务通道。"
                 : string.Join("\n", invalidDescriptions);
+            if (humidityPointCount > 0)
+            {
+                List<string> probeTemperatureDescriptions = new List<string>();
+                foreach (InspectionChannelData channel in snapshot.Channels)
+                {
+                    if (channel.Role != ChannelRole.HumidityProbeTemperature ||
+                        channel.Channel < 1 ||
+                        channel.Channel > humidityPointCount)
+                        continue;
+
+                    string parsedValue = double.IsFinite(channel.Value)
+                        ? $"{channel.Value:F2} ℃"
+                        : "不可解析";
+                    string state = channel.IsValid ? string.Empty : $"，{channel.Status}";
+                    probeTemperatureDescriptions.Add($"探头{channel.Channel}温度：{parsedValue}{state}");
+                }
+
+                //qualityTooltip += "\n\n湿度探头伴随温度（诊断，不参与校准）：\n" +
+                //                  (probeTemperatureDescriptions.Count == 0
+                //                      ? "设备响应未包含伴随温度"
+                //                      : string.Join("  |  ", probeTemperatureDescriptions));
+            }
+            QualitySummaryTextBlock.ToolTip = qualityTooltip;
 
             List<string> liveLines = new List<string>();
             if (temperaturePointCount > 0) liveLines.Add(FormatSummary(temperatures, "温度", "℃"));
@@ -1146,79 +1202,403 @@ namespace UpperComInspectionInstrument2022.Views
 
 
 
-        /// <summary>重绘最近 60 组温度、湿度空间平均趋势及当前数值范围。</summary>
+        /// <summary>
+        /// 重绘最近 60 组中心温度和湿度 O 点趋势。
+        /// 温度、湿度使用各自有单位的纵轴，避免不同量纲在无刻度画布上产生错误对比。
+        /// </summary>
         private void DrawMeasurementChart()
         {
+            CloseChartToolTip();
             MeasurementChartCanvas.Children.Clear();
             double width = MeasurementChartCanvas.ActualWidth;
             double height = MeasurementChartCanvas.ActualHeight;
-            if (width < 100 || height < 80) return;
-
-            for (int i = 1; i < 5; i++)
-            {
-                double y = height * i / 5;
-                MeasurementChartCanvas.Children.Add(new Line { X1 = 0, X2 = width, Y1 = y, Y2 = y, Stroke = new SolidColorBrush(Color.FromRgb(226, 232, 240)), StrokeDashArray = new DoubleCollection { 2, 3 } });
-            }
-            for (int i = 1; i < 8; i++)
-            {
-                double x = width * i / 8;
-                MeasurementChartCanvas.Children.Add(new Line { X1 = x, X2 = x, Y1 = 0, Y2 = height, Stroke = new SolidColorBrush(Color.FromRgb(226, 232, 240)), StrokeDashArray = new DoubleCollection { 2, 3 } });
-            }
+            if (width < 240 || height < 120) return;
 
             int start = Math.Max(0, _viewModel.Snapshots.Count - 60);
             List<double> temperatures = new List<double>();
             List<double> humidities = new List<double>();
             int temperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0;
             int humidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0;
+            int temperatureCenter = CalibrationTaskContext.IsConfigured
+                ? CalibrationTaskContext.TemperatureCenterPoint
+                : int.TryParse(CenterPointComboBox.SelectedItem as string, out int centerPoint) ? centerPoint : 1;
+            int humidityCenter = CalibrationTaskContext.IsConfigured
+                ? Math.Max(1, CalibrationTaskContext.HumidityCenterPoint)
+                : temperatureCenter;
+
+            _visibleTrendSamples.Clear();
             for (int i = start; i < _viewModel.Snapshots.Count; i++)
             {
-                List<double> values = new List<double>();
-                AddAverage(_viewModel.Snapshots[i].Channels, ChannelType.Temperature, temperaturePointCount, values);
-                temperatures.Add(values.Count == 0 ? double.NaN : values[0]);
-                values.Clear();
-                AddAverage(_viewModel.Snapshots[i].Channels, ChannelType.Humidity, humidityPointCount, values);
-                humidities.Add(values.Count == 0 ? double.NaN : values[0]);
+                MeasurementSnapshot snapshot = _viewModel.Snapshots[i];
+                double temperature = FindTrendValue(snapshot, ChannelType.Temperature, temperatureCenter, temperaturePointCount);
+                double humidity = FindTrendValue(snapshot, ChannelType.Humidity, humidityCenter, humidityPointCount);
+                temperatures.Add(temperature);
+                humidities.Add(humidity);
+                _visibleTrendSamples.Add(new TrendSample(snapshot.Sequence, snapshot.Timestamp, temperature, humidity));
             }
-            AddChartLine(temperatures, width, height, Brushes.DodgerBlue);
-            AddChartLine(humidities, width, height, Brushes.SeaGreen);
-            ChartScaleTextBlock.Text = $"{FormatChartRange(temperatures, "T", "℃")}{(temperaturePointCount > 0 && humidityPointCount > 0 ? "  ·  " : string.Empty)}{FormatChartRange(humidities, "H", "%RH")}";
+
+            bool showTemperature = temperaturePointCount > 0;
+            bool showHumidity = humidityPointCount > 0;
+            UpdateTrendLegend(showTemperature, showHumidity, temperatureCenter, humidityCenter);
+
+            double leftMargin = 56;
+            double rightMargin = showTemperature && showHumidity ? 62 : 16;
+            double topMargin = 21;
+            double bottomMargin = 30;
+            _chartPlotArea = new Rect(leftMargin, topMargin,
+                Math.Max(1, width - leftMargin - rightMargin),
+                Math.Max(1, height - topMargin - bottomMargin));
+
+            ChartAxisScale? temperatureScale = showTemperature
+                ? CreateAxisScale(temperatures, CalibrationTaskContext.SetTemperature, 0.5)
+                : null;
+            ChartAxisScale? humidityScale = showHumidity
+                ? CreateAxisScale(humidities, CalibrationTaskContext.SetHumidity, 2.0)
+                : null;
+
+            DrawChartGridAndAxes(temperatureScale, humidityScale, showTemperature, showHumidity);
+            DrawTimeAxis(_visibleTrendSamples);
+            if (temperatureScale != null)
+            {
+                DrawSetPointLine(CalibrationTaskContext.SetTemperature, temperatureScale, Brushes.DodgerBlue);
+                AddChartLine(temperatures, temperatureScale, Brushes.DodgerBlue);
+            }
+            if (humidityScale != null)
+            {
+                DrawSetPointLine(CalibrationTaskContext.SetHumidity, humidityScale, Brushes.SeaGreen);
+                AddChartLine(humidities, humidityScale, Brushes.SeaGreen);
+            }
+
+            ChartScaleTextBlock.Text = BuildCurrentTrendText(
+                temperatures, humidities, showTemperature, showHumidity, temperatureCenter, humidityCenter);
         }
 
-        /// <summary>将一条数值序列按自身最小/最大值缩放后绘制为折线。</summary>
-        private void AddChartLine(List<double> values, double width, double height, Brush brush)
+        /// <summary>取得指定中心通道的有效值；通道缺失或无效时返回 NaN，使图中形成断点。</summary>
+        private static double FindTrendValue(MeasurementSnapshot snapshot, ChannelType type, int channelNumber, int pointCount)
         {
-            List<double> valid = values.FindAll(v => !double.IsNaN(v) && !double.IsInfinity(v));
-            if (valid.Count < 2) return;
-            double min = double.MaxValue;
-            double max = double.MinValue;
-            foreach (double value in valid) { min = Math.Min(min, value); max = Math.Max(max, value); }
-            double range = max - min;
-            Polyline line = new Polyline { Stroke = brush, StrokeThickness = 2, Points = new PointCollection() };
+            if (channelNumber < 1 || channelNumber > pointCount) return double.NaN;
+            InspectionChannelData? channel = snapshot.Channels.Find(item =>
+                item.Channel == channelNumber &&
+                item.IsValid &&
+                MeasurementChannelSelectionService.IsCalibrationChannel(item, type));
+            return channel == null || !double.IsFinite(channel.Value) ? double.NaN : channel.Value;
+        }
+
+        /// <summary>按数据、任务设定值和最小可视跨度生成纵轴量程，避免微小噪声被铺满整张图。</summary>
+        private static ChartAxisScale CreateAxisScale(List<double> values, double? setPoint, double minimumSpan)
+        {
+            List<double> valid = values.FindAll(double.IsFinite);
+            if (setPoint.HasValue && double.IsFinite(setPoint.Value)) valid.Add(setPoint.Value);
+            if (valid.Count == 0) return new ChartAxisScale(0, minimumSpan);
+
+            double min = valid[0];
+            double max = valid[0];
+            foreach (double value in valid)
+            {
+                min = Math.Min(min, value);
+                max = Math.Max(max, value);
+            }
+
+            double span = Math.Max(max - min, minimumSpan);
+            double center = (min + max) / 2;
+            double paddedSpan = span * 1.2;
+            return new ChartAxisScale(center - paddedSpan / 2, center + paddedSpan / 2);
+        }
+
+        /// <summary>绘制带单位和刻度的温度左轴、湿度右轴以及共用网格。</summary>
+        private void DrawChartGridAndAxes(
+            ChartAxisScale? temperatureScale,
+            ChartAxisScale? humidityScale,
+            bool showTemperature,
+            bool showHumidity)
+        {
+            Brush gridBrush = new SolidColorBrush(Color.FromRgb(226, 232, 240));
+            Brush borderBrush = new SolidColorBrush(Color.FromRgb(148, 163, 184));
+            const int verticalIntervals = 4;
+            for (int i = 0; i <= verticalIntervals; i++)
+            {
+                double y = _chartPlotArea.Top + _chartPlotArea.Height * i / verticalIntervals;
+                AddChartLineShape(_chartPlotArea.Left, y, _chartPlotArea.Right, y, gridBrush, 1, i is 0 or verticalIntervals ? null : new DoubleCollection { 2, 3 });
+
+                if (showTemperature && temperatureScale != null)
+                {
+                    double value = temperatureScale.Maximum - temperatureScale.Span * i / verticalIntervals;
+                    AddChartText(FormatAxisValue(value, temperatureScale.Span / verticalIntervals), 2, y - 8, 48, TextAlignment.Right, Brushes.DodgerBlue);
+                }
+                if (showHumidity && humidityScale != null)
+                {
+                    double value = humidityScale.Maximum - humidityScale.Span * i / verticalIntervals;
+                    double x = showTemperature ? _chartPlotArea.Right + 7 : 2;
+                    TextAlignment alignment = showTemperature ? TextAlignment.Left : TextAlignment.Right;
+                    AddChartText(FormatAxisValue(value, humidityScale.Span / verticalIntervals), x, y - 8, showTemperature ? 52 : 48, alignment, Brushes.SeaGreen);
+                }
+            }
+
+            AddChartLineShape(_chartPlotArea.Left, _chartPlotArea.Top, _chartPlotArea.Left, _chartPlotArea.Bottom, borderBrush, 1, null);
+            AddChartLineShape(_chartPlotArea.Right, _chartPlotArea.Top, _chartPlotArea.Right, _chartPlotArea.Bottom, borderBrush, 1, null);
+            AddChartText(showTemperature ? "温度 (℃)" : "湿度 (%RH)", 2, 1, 72, TextAlignment.Left, showTemperature ? Brushes.DodgerBlue : Brushes.SeaGreen, FontWeights.SemiBold);
+            if (showTemperature && showHumidity)
+                AddChartText("湿度 (%RH)", _chartPlotArea.Right - 18, 1, 78, TextAlignment.Right, Brushes.SeaGreen, FontWeights.SemiBold);
+        }
+
+        /// <summary>按实际采集时间绘制横轴刻度，最多显示六个标签以保持可读性。</summary>
+        private void DrawTimeAxis(List<TrendSample> samples)
+        {
+            if (samples.Count == 0)
+            {
+                AddChartText("等待采集数据", _chartPlotArea.Left, _chartPlotArea.Top + _chartPlotArea.Height / 2 - 9,
+                    _chartPlotArea.Width, TextAlignment.Center, new SolidColorBrush(Color.FromRgb(148, 163, 184)));
+                return;
+            }
+
+            Brush gridBrush = new SolidColorBrush(Color.FromRgb(226, 232, 240));
+            int labelCount = Math.Min(6, samples.Count);
+            HashSet<int> drawnIndexes = new HashSet<int>();
+            for (int i = 0; i < labelCount; i++)
+            {
+                int index = labelCount == 1
+                    ? 0
+                    : (int)Math.Round((samples.Count - 1) * i / (double)(labelCount - 1));
+                if (!drawnIndexes.Add(index)) continue;
+                double x = GetTrendX(index, samples.Count);
+                AddChartLineShape(x, _chartPlotArea.Top, x, _chartPlotArea.Bottom, gridBrush, 1,
+                    i is 0 or 5 ? null : new DoubleCollection { 2, 3 });
+                AddChartText(samples[index].Timestamp.ToString("HH:mm:ss"), x - 30, _chartPlotArea.Bottom + 6,
+                    60, TextAlignment.Center, new SolidColorBrush(Color.FromRgb(100, 116, 139)));
+            }
+        }
+
+        /// <summary>将一条数据序列按指定纵轴绘制；无效值会结束当前折线段，避免跨故障点连线。</summary>
+        private void AddChartLine(List<double> values, ChartAxisScale scale, Brush brush)
+        {
+            Polyline? segment = null;
             for (int i = 0; i < values.Count; i++)
             {
-                if (double.IsNaN(values[i])) continue;
-                double x = values.Count == 1 ? 0 : width * i / (values.Count - 1);
-                double y = range < 0.0001
-                    ? height / 2
-                    : height - ((values[i] - min) / range * (height - 10)) - 5;
-                line.Points.Add(new Point(x, y));
+                if (!double.IsFinite(values[i]))
+                {
+                    segment = null;
+                    continue;
+                }
+
+                if (segment == null)
+                {
+                    segment = new Polyline
+                    {
+                        Stroke = brush,
+                        StrokeThickness = 2,
+                        StrokeLineJoin = PenLineJoin.Round,
+                        Points = new PointCollection()
+                    };
+                    MeasurementChartCanvas.Children.Add(segment);
+                }
+                double x = GetTrendX(i, values.Count);
+                double y = GetTrendY(values[i], scale);
+                segment.Points.Add(new Point(x, y));
+                bool hasPrevious = i > 0 && double.IsFinite(values[i - 1]);
+                bool hasNext = i + 1 < values.Count && double.IsFinite(values[i + 1]);
+                if (!hasPrevious && !hasNext) AddChartPoint(x, y, brush);
             }
-            MeasurementChartCanvas.Children.Add(line);
         }
 
-        /// <summary>生成趋势图右上角的当前量程文本。</summary>
-        private static string FormatChartRange(List<double> values, string label, string unit)
+        /// <summary>为只有一个有效采样的孤立折线段绘制圆点，使首组数据和短暂恢复值仍然可见。</summary>
+        private void AddChartPoint(double x, double y, Brush brush)
         {
-            List<double> valid = values.FindAll(value => double.IsFinite(value));
-            if (valid.Count == 0) return string.Empty;
-            double min = double.MaxValue;
-            double max = double.MinValue;
-            foreach (double value in valid) { min = Math.Min(min, value); max = Math.Max(max, value); }
-            return $"{label} {min:F2}～{max:F2} {unit}";
+            Ellipse point = new Ellipse
+            {
+                Width = 6,
+                Height = 6,
+                Fill = brush,
+                Stroke = Brushes.White,
+                StrokeThickness = 1,
+                IsHitTestVisible = false
+            };
+            Canvas.SetLeft(point, x - 3);
+            Canvas.SetTop(point, y - 3);
+            MeasurementChartCanvas.Children.Add(point);
+        }
+
+        /// <summary>在任务设定值位置绘制同色虚线；设定值已参与量程计算，因此不会落到图外。</summary>
+        private void DrawSetPointLine(double? setPoint, ChartAxisScale scale, Brush brush)
+        {
+            if (!setPoint.HasValue || !double.IsFinite(setPoint.Value)) return;
+            double y = GetTrendY(setPoint.Value, scale);
+            AddChartLineShape(_chartPlotArea.Left, y, _chartPlotArea.Right, y, brush, 1, new DoubleCollection { 7, 4 }, 0.65);
+        }
+
+        /// <summary>同步图例名称和可见性，使单温度、单湿度及温湿度任务均不出现无关图例。</summary>
+        private void UpdateTrendLegend(bool showTemperature, bool showHumidity, int temperatureCenter, int humidityCenter)
+        {
+            TemperatureLegendLine.Visibility = showTemperature ? Visibility.Visible : Visibility.Collapsed;
+            TemperatureLegendTextBlock.Visibility = showTemperature ? Visibility.Visible : Visibility.Collapsed;
+            HumidityLegendLine.Visibility = showHumidity ? Visibility.Visible : Visibility.Collapsed;
+            HumidityLegendTextBlock.Visibility = showHumidity ? Visibility.Visible : Visibility.Collapsed;
+            TemperatureLegendTextBlock.Text = $"中心温度 T{temperatureCenter}";
+            HumidityLegendTextBlock.Text = $"湿度 O点 H{humidityCenter}";
+            SetPointLegendTextBlock.Visibility = (showTemperature && CalibrationTaskContext.SetTemperature.HasValue) ||
+                                                 (showHumidity && CalibrationTaskContext.SetHumidity.HasValue)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        /// <summary>生成图表右上角的最新有效中心测点值，而不是用无刻度的最小/最大范围替代坐标轴。</summary>
+        private static string BuildCurrentTrendText(
+            List<double> temperatures,
+            List<double> humidities,
+            bool showTemperature,
+            bool showHumidity,
+            int temperatureCenter,
+            int humidityCenter)
+        {
+            List<string> values = new List<string>();
+            if (showTemperature)
+                values.Add($"T{temperatureCenter} {FormatLatestValue(temperatures, "℃")}");
+            if (showHumidity)
+                values.Add($"O/H{humidityCenter} {FormatLatestValue(humidities, "%RH")}");
+            return values.Count == 0 ? "等待有效任务通道" : string.Join("  ·  ", values);
+        }
+
+        /// <summary>从末尾查找最近一个有效值，避免最新一次通信缺失时显示伪造的零值。</summary>
+        private static string FormatLatestValue(List<double> values, string unit)
+        {
+            for (int i = values.Count - 1; i >= 0; i--)
+            {
+                if (double.IsFinite(values[i])) return $"{values[i]:F3} {unit}";
+            }
+            return $"-- {unit}";
+        }
+
+        /// <summary>鼠标在绘图区移动时定位最近采样组，并显示时间、序号及两种中心测点值。</summary>
+        private void MeasurementChartCanvas_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_visibleTrendSamples.Count == 0 || _chartPlotArea.IsEmpty) return;
+            Point point = e.GetPosition(MeasurementChartCanvas);
+            if (!_chartPlotArea.Contains(point))
+            {
+                CloseChartToolTip();
+                return;
+            }
+
+            int index = _visibleTrendSamples.Count == 1
+                ? 0
+                : (int)Math.Round((point.X - _chartPlotArea.Left) / _chartPlotArea.Width * (_visibleTrendSamples.Count - 1));
+            index = Math.Clamp(index, 0, _visibleTrendSamples.Count - 1);
+            double x = GetTrendX(index, _visibleTrendSamples.Count);
+            if (_chartCursorLine != null) MeasurementChartCanvas.Children.Remove(_chartCursorLine);
+            _chartCursorLine = new Line
+            {
+                X1 = x,
+                X2 = x,
+                Y1 = _chartPlotArea.Top,
+                Y2 = _chartPlotArea.Bottom,
+                Stroke = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 3, 3 },
+                IsHitTestVisible = false
+            };
+            MeasurementChartCanvas.Children.Add(_chartCursorLine);
+
+            TrendSample sample = _visibleTrendSamples[index];
+            List<string> lines = new List<string>
+            {
+                $"第 {sample.Sequence} 组  {sample.Timestamp:HH:mm:ss.fff}"
+            };
+            if (double.IsFinite(sample.Temperature)) lines.Add($"中心温度  {sample.Temperature:F3} ℃");
+            if (double.IsFinite(sample.Humidity)) lines.Add($"湿度 O点  {sample.Humidity:F3} %RH");
+            if (lines.Count == 1) lines.Add("本组中心测点无有效数据");
+            _measurementChartToolTip.Content = string.Join("\n", lines);
+            _measurementChartToolTip.IsOpen = true;
+        }
+
+        /// <summary>鼠标离开趋势图后关闭读数提示并移除游标。</summary>
+        private void MeasurementChartCanvas_MouseLeave(object sender, MouseEventArgs e) => CloseChartToolTip();
+
+        /// <summary>统一关闭趋势提示，避免重绘或切页后残留悬浮窗口。</summary>
+        private void CloseChartToolTip()
+        {
+            _measurementChartToolTip.IsOpen = false;
+            if (_chartCursorLine != null)
+            {
+                MeasurementChartCanvas.Children.Remove(_chartCursorLine);
+                _chartCursorLine = null;
+            }
+        }
+
+        /// <summary>把采样序号转换为绘图区横坐标。</summary>
+        private double GetTrendX(int index, int count) => count <= 1
+            ? _chartPlotArea.Left + _chartPlotArea.Width / 2
+            : _chartPlotArea.Left + _chartPlotArea.Width * index / (count - 1);
+
+        /// <summary>把某一纵轴上的物理量转换为绘图区纵坐标。</summary>
+        private double GetTrendY(double value, ChartAxisScale scale) =>
+            _chartPlotArea.Bottom - (value - scale.Minimum) / scale.Span * _chartPlotArea.Height;
+
+        /// <summary>创建图表线条，集中设置抗干扰所需的非命中测试属性。</summary>
+        private void AddChartLineShape(
+            double x1, double y1, double x2, double y2,
+            Brush brush, double thickness, DoubleCollection? dashArray, double opacity = 1)
+        {
+            MeasurementChartCanvas.Children.Add(new Line
+            {
+                X1 = x1,
+                Y1 = y1,
+                X2 = x2,
+                Y2 = y2,
+                Stroke = brush,
+                StrokeThickness = thickness,
+                StrokeDashArray = dashArray,
+                Opacity = opacity,
+                IsHitTestVisible = false
+            });
+        }
+
+        /// <summary>在画布上创建定位文字，用于坐标单位、刻度和时间标签。</summary>
+        private void AddChartText(
+            string text, double left, double top, double width,
+            TextAlignment alignment, Brush foreground, FontWeight? fontWeight = null)
+        {
+            TextBlock textBlock = new TextBlock
+            {
+                Text = text,
+                Width = Math.Max(1, width),
+                TextAlignment = alignment,
+                Foreground = foreground,
+                FontSize = 10.5,
+                FontWeight = fontWeight ?? FontWeights.Normal,
+                IsHitTestVisible = false
+            };
+            Canvas.SetLeft(textBlock, left);
+            Canvas.SetTop(textBlock, top);
+            MeasurementChartCanvas.Children.Add(textBlock);
+        }
+
+        /// <summary>根据刻度间隔选择合适的小数位数，兼顾可读性和测量分辨率。</summary>
+        private static string FormatAxisValue(double value, double interval)
+        {
+            if (interval >= 10) return value.ToString("F0");
+            if (interval >= 1) return value.ToString("F1");
+            if (interval >= 0.1) return value.ToString("F2");
+            return value.ToString("F3");
         }
 
         /// <summary>画布尺寸变化后按新尺寸重绘趋势线。</summary>
         private void MeasurementChartCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawMeasurementChart();
+
+        /// <summary>当前趋势图中一组与采集快照对应的中心测点数据。</summary>
+        private sealed record TrendSample(long Sequence, DateTime Timestamp, double Temperature, double Humidity);
+
+        /// <summary>图表纵轴范围；构造时确保跨度大于零，防止常量数据导致除零。</summary>
+        private sealed class ChartAxisScale
+        {
+            public ChartAxisScale(double minimum, double maximum)
+            {
+                Minimum = minimum;
+                Maximum = maximum > minimum ? maximum : minimum + 1;
+            }
+
+            public double Minimum { get; }
+            public double Maximum { get; }
+            public double Span => Maximum - Minimum;
+        }
 
         /// <summary>采集开始/停止时统一锁定或解锁会影响执行流程的参数。</summary>
         private void SetExecutionParametersEnabled(bool enabled)

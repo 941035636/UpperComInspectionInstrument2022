@@ -86,8 +86,8 @@ internal static class Program
         layout.SelectedIndex = 2;
         Assert(!temperatureCount.IsReadOnly && !temperatureCenter.IsReadOnly, "JJF1376 custom work-position mode is editable");
         Assert(Find<TextBlock>(taskPage, "StandardCapabilityTextBlock").Text.Contains("0.02") &&
-               Find<TextBlock>(taskPage, "StandardCapabilityTextBlock").Text.Contains("热电偶"),
-            "furnace task page exposes measuring-instrument class and thermocouple grade");
+               Find<TextBlock>(taskPage, "StandardCapabilityTextBlock").Text.Contains("廉金属不低于1级"),
+            "furnace task page should reference the normative instrument class and thermocouple grade automatically");
 
         VerifyLoginLayoutAndSessionGate();
         VerifySystemSettingsControlProportions();
@@ -169,7 +169,7 @@ internal static class Program
     /// <summary>防止系统设置页的普通输入框和底部保存按钮再次随窗口无限拉伸。</summary>
     private static void VerifySystemSettingsControlProportions()
     {
-        DeviceView settingsPage = new();
+        DeviceView settingsPage = new(0);
         TextBox standardName = Find<TextBox>(settingsPage, "StandardNameTextBox");
         if (standardName.MinHeight != 32 ||
             standardName.Parent is not Grid identityGrid ||
@@ -190,6 +190,29 @@ internal static class Program
         if (saveSettings.Width != 220 || DockPanel.GetDock(saveSettings) != Dock.Right ||
             saveSettings.Parent is not DockPanel { LastChildFill: false })
             throw new InvalidOperationException("system settings footer should use a normal-width right-aligned primary action");
+
+        TextBox accuracySpecification = Find<TextBox>(settingsPage, "AccuracySpecificationTextBox");
+        if (settingsPage.FindName("CapabilityStandardComboBox") != null ||
+            settingsPage.FindName("Jjf1101RequirementPanel") != null ||
+            settingsPage.FindName("Jjf1376RequirementPanel") != null ||
+            Find<Grid>(settingsPage, "Jjf1101AccuracyPanel").Visibility != Visibility.Visible ||
+            Find<Grid>(settingsPage, "Jjf1376InstrumentPanel").Visibility != Visibility.Collapsed ||
+            Find<TextBox>(settingsPage, "HumidityResolutionTextBox").Visibility != Visibility.Visible ||
+            !accuracySpecification.IsReadOnly ||
+            accuracySpecification.Text != SystemSettingsContext.Jjf1101AccuracyRequirement)
+            throw new InvalidOperationException("JJF1101 settings should bind the task standard, auto-fill read-only MPE and omit a second standard selector");
+
+        DeviceView furnaceSettingsPage = new(1);
+        TextBox instrumentClass = Find<TextBox>(furnaceSettingsPage, "MeasuringInstrumentClassTextBox");
+        TextBox thermocoupleGrade = Find<TextBox>(furnaceSettingsPage, "ThermocoupleGradeTextBox");
+        if (Find<Grid>(furnaceSettingsPage, "Jjf1101AccuracyPanel").Visibility != Visibility.Collapsed ||
+            Find<Grid>(furnaceSettingsPage, "Jjf1376InstrumentPanel").Visibility != Visibility.Visible ||
+            Find<TextBox>(furnaceSettingsPage, "HumidityResolutionTextBox").Visibility != Visibility.Collapsed ||
+            Find<Border>(furnaceSettingsPage, "HumidityCertificatePanel").Visibility != Visibility.Collapsed ||
+            Find<Grid>(furnaceSettingsPage, "TemperatureStabilityChangeRow").Visibility != Visibility.Collapsed ||
+            !instrumentClass.IsReadOnly || instrumentClass.Text != "0.02" ||
+            !thermocoupleGrade.IsReadOnly || thermocoupleGrade.Text != SystemSettingsContext.Jjf1376ThermocoupleGradeRequirement)
+            throw new InvalidOperationException("JJF1376 settings should auto-fill fixed normative values and hide JJF1101-only fields");
     }
 
     private static void VerifySignedResultPresentation()
@@ -246,6 +269,20 @@ internal static class Program
         object frozenColumns = matrix.ReadLocalValue(DataGrid.FrozenColumnCountProperty);
         if (frozenColumns is not int frozenColumnCount || frozenColumnCount != 2)
             throw new InvalidOperationException("measurement matrix should keep sequence and time visible while horizontally scrolling");
+        Canvas trendChart = Find<Canvas>(workbench, "MeasurementChartCanvas");
+        if (trendChart.Cursor != Cursors.Cross ||
+            Find<TextBlock>(workbench, "TemperatureLegendTextBlock").Text != "中心温度" ||
+            Find<TextBlock>(workbench, "HumidityLegendTextBlock").Text != "湿度 O点")
+            throw new InvalidOperationException("trend chart should expose center-point legends and interactive reading cursor");
+        string workbenchCode = File.ReadAllText(Path.Combine("UpperComInspectionInstrument2022", "Views", "RealTimeMeasurementPage.xaml.cs"));
+        if (!workbenchCode.Contains("CreateAxisScale(temperatures", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CreateAxisScale(humidities", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("DrawTimeAxis(_visibleTrendSamples)", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("segment = null", StringComparison.Ordinal))
+            throw new InvalidOperationException("trend chart should retain independent unit axes, time ticks and invalid-data gaps");
+        if (!workbenchCode.Contains("FormatMeasurementMatrixValue(channel)", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("湿度探头伴随温度（诊断，不参与校准）", StringComparison.Ordinal))
+            throw new InvalidOperationException("negative humidity and probe-temperature diagnostics should remain visible to the operator");
         Button startAcquisition = Find<Button>(workbench, "StartAcquisitionButton");
         startAcquisition.IsEnabled = true;
         AssertBrush(startAcquisition.Foreground, Colors.White, "primary workbench action should keep readable white text");

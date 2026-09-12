@@ -18,7 +18,6 @@ namespace UpperComInspectionInstrument2022.Services
         private const string SummaryFileName = "作业摘要.csv";
         private const string TaskFileName = "任务信息.csv";
         private const string ResultFileName = "校准结果.csv";
-        private const string UncertaintyFileName = "不确定度分量.csv";
         private const string ReportDirectoryName = "报告";
         private const string ArchiveFileName = "校准归档.pdf";
         private const string ReportFontFamily = "CalibrationChinese";
@@ -34,7 +33,7 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>
         /// 校验作业状态和必需文件，原子生成 PDF，并重新打开检查 PDF 头、页数和标题。
-        /// 数据格式 1.1 必须包含不确定度分量；1.0 历史作业允许生成，但会标明追溯限制。
+        /// 报告只读取作业摘要、任务信息和校准结果，最终扩展不确定度已固化在校准结果中。
         /// </summary>
         public bool TryGenerate(string jobDirectory, out string archivePath, out string error)
         {
@@ -56,7 +55,6 @@ namespace UpperComInspectionInstrument2022.Services
             string summaryPath = Path.Combine(fullJobDirectory, SummaryFileName);
             string taskPath = Path.Combine(fullJobDirectory, TaskFileName);
             string resultPath = Path.Combine(fullJobDirectory, ResultFileName);
-            string uncertaintyPath = Path.Combine(fullJobDirectory, UncertaintyFileName);
             foreach (string requiredPath in new[] { summaryPath, taskPath, resultPath })
             {
                 if (File.Exists(requiredPath)) continue;
@@ -73,19 +71,8 @@ namespace UpperComInspectionInstrument2022.Services
                     return false;
                 }
 
-                bool requiresUncertaintyFile = Version.TryParse(Get(summary, "数据格式版本", "1.0"), out Version? version) &&
-                                               version.CompareTo(new Version(1, 1)) >= 0;
-                if (requiresUncertaintyFile && !File.Exists(uncertaintyPath))
-                {
-                    error = $"作业归档不完整，数据格式 {version} 必须包含文件：{UncertaintyFileName}";
-                    return false;
-                }
-
                 Dictionary<string, string> task = ToPairDictionary(CalibrationFileStorageService.ReadCsvFile(taskPath));
                 List<string[]> resultRows = CalibrationFileStorageService.ReadCsvFile(resultPath);
-                List<string[]> uncertaintyRows = File.Exists(uncertaintyPath)
-                    ? CalibrationFileStorageService.ReadCsvFile(uncertaintyPath)
-                    : new List<string[]>();
 
                 string reportDirectory = Path.Combine(fullJobDirectory, ReportDirectoryName);
                 Directory.CreateDirectory(reportDirectory);
@@ -93,7 +80,7 @@ namespace UpperComInspectionInstrument2022.Services
                 string temporaryPath = Path.Combine(reportDirectory, $".{Guid.NewGuid():N}.校准归档.tmp.pdf");
                 try
                 {
-                    CreateArchive(temporaryPath, summary, task, resultRows, uncertaintyRows);
+                    CreateArchive(temporaryPath, summary, task, resultRows);
                     ValidateArchive(temporaryPath);
                     File.Move(temporaryPath, archivePath, overwrite: true);
                 }
@@ -113,13 +100,12 @@ namespace UpperComInspectionInstrument2022.Services
             }
         }
 
-        /// <summary>创建标题、任务快照、结果、不确定度摘要、声明和签字区域。</summary>
+        /// <summary>创建标题、任务快照、结果、声明和签字区域。</summary>
         private static void CreateArchive(
             string path,
             IReadOnlyDictionary<string, string> summary,
             IReadOnlyDictionary<string, string> task,
-            IReadOnlyList<string[]> resultRows,
-            IReadOnlyList<string[]> uncertaintyRows)
+            IReadOnlyList<string[]> resultRows)
         {
             Document document = new();
             document.Info.Title = "Calibration Archive Report";
@@ -188,15 +174,7 @@ namespace UpperComInspectionInstrument2022.Services
             Paragraph resultNote = section.AddParagraph(BreakCjk("结果说明：以上量值来自归档的正式样本和规范计算结果；实时趋势数据不参与正式结果计算。"));
             resultNote.Style = "Note";
 
-            AddHeading(section, "五、测量不确定度摘要");
-            if (!AddUncertaintyTable(section, uncertaintyRows))
-            {
-                AddCallout(section,
-                    "该历史归档未保存结构化不确定度分量，只能展示校准结果文件中的最终量值。签发前应查验原始评定资料。",
-                    Colors.LightYellow);
-            }
-
-            AddHeading(section, "六、声明与签发");
+            AddHeading(section, "五、声明与签发");
             Paragraph declaration = section.AddParagraph(BreakCjk(
                 "本报告仅对本次单工况、所列布点和归档正式样本负责。被校设备与委托档案中标记为“未填写（可选）”的字段，应在正式签发前按实验室管理程序补全或确认不适用。未经书面批准，不得部分复制本报告。"));
             declaration.Format.SpaceAfter = Unit.FromMillimeter(4);
@@ -341,42 +319,6 @@ namespace UpperComInspectionInstrument2022.Services
             ConfigureTable(table);
             AddCsvRows(table, rows, 4);
             table.Format.SpaceAfter = Unit.FromMillimeter(1);
-        }
-
-        /// <summary>从分量 CSV 提取每个评定项目的 uc、k、U 汇总；无可用分量时返回 false。</summary>
-        private static bool AddUncertaintyTable(Section section, IReadOnlyList<string[]> rows)
-        {
-            if (rows.Count < 2) return false;
-            Dictionary<string, int> columns = rows[0]
-                .Select((value, index) => (value, index))
-                .Where(item => !string.IsNullOrWhiteSpace(item.value))
-                .ToDictionary(item => item.value, item => item.index, StringComparer.Ordinal);
-            string[] required = { "结果项目", "评定点", "合成标准不确定度uc", "包含因子k", "扩展不确定度U" };
-            if (required.Any(name => !columns.ContainsKey(name))) return false;
-
-            List<string[]> summaryRows = new() { new[] { "结果项目", "评定点", "uc", "k", "U" } };
-            foreach (string[] row in rows.Skip(1)
-                         .GroupBy(row => $"{Cell(row, columns["结果项目"])}\u001f{Cell(row, columns["评定点"])}", StringComparer.Ordinal)
-                         .Select(group => group.First()))
-            {
-                summaryRows.Add(new[]
-                {
-                    Cell(row, columns["结果项目"]), Cell(row, columns["评定点"]),
-                    Cell(row, columns["合成标准不确定度uc"]), Cell(row, columns["包含因子k"]), Cell(row, columns["扩展不确定度U"])
-                });
-            }
-            if (summaryRows.Count == 1) return false;
-
-            Table table = section.AddTable();
-            table.AddColumn(Unit.FromMillimeter(49));
-            table.AddColumn(Unit.FromMillimeter(49));
-            table.AddColumn(Unit.FromMillimeter(26));
-            table.AddColumn(Unit.FromMillimeter(18));
-            table.AddColumn(Unit.FromMillimeter(34));
-            ConfigureTable(table);
-            AddCsvRows(table, summaryRows, 5);
-            table.Format.SpaceAfter = Unit.FromMillimeter(2);
-            return true;
         }
 
         /// <summary>添加校准员、核验员和批准人的签字留白。</summary>

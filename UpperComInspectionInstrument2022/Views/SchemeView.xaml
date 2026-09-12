@@ -33,7 +33,7 @@
             <StackPanel Margin="28,18,28,24">
                 <Border Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="1 校准依据" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
+                        <TextBlock Text="1、校准依据" FontSize="18" FontWeight="Bold" Foreground="#1E293B" Margin="0,0,0,0"/>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
                             <TextBlock Text="校准规范 *" Style="{StaticResource FieldLabel}"/>
@@ -70,11 +70,11 @@
                 </Border>
 
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
-                    <Expander x:Name="OptionalArchiveExpander" IsExpanded="False">
+                    <Expander x:Name="OptionalArchiveExpander" IsExpanded="False" >
                         <Expander.Header>
                             <StackPanel>
-                                <TextBlock Text="2 被校设备与委托信息（可选）" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
-                                <TextBlock Text="不影响连接、实时观察和正式采样；需要归档或出具报告时再展开补充。" Margin="0,6,0,0" Foreground="#64748B"/>
+                                <TextBlock Text="2、被校设备与委托信息（可选）" FontSize="18" FontWeight="Bold" Foreground="#1E293B" Margin="15,0,0,0"/>
+                                <TextBlock Text="不影响连接、实时观察和正式采样；需要归档或出具报告时再展开补充。" Margin="15,6,0,0" Foreground="#64748B"/>
                             </StackPanel>
                         </Expander.Header>
                         <StackPanel Margin="0,14,0,0">
@@ -97,7 +97,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
                             <TextBlock Text="校准日期（可选）" Style="{StaticResource FieldLabel}"/><DatePicker x:Name="CalibrationDatePicker" Grid.Column="1" Width="190" HorizontalAlignment="Left" Margin="8,0,0,0" Padding="5"/>
                         </Grid>
-                        <Expander Header="报告补充信息（可选）" Margin="0,14,0,0" Foreground="#475569">
+                        <Expander Header="报告补充信息（可选）" Margin="15,14,0,0" Foreground="#475569">
                             <StackPanel Margin="0,12,0,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
@@ -112,7 +112,7 @@
 
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="3 校准点与布点" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
+                        <TextBlock Text="3、校准点与布点" FontSize="18" FontWeight="Bold" Foreground="#1E293B" Margin="0,0,0,0"/>
                         <TextBlock Text="不可更改的参数项由规范和设备容积自动生成；可改项是本次任务实值，必须按设备设定、实际接线和铭牌/说明书填写。" Margin="0,6,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
@@ -176,7 +176,7 @@
 
                 <Border Margin="0,14,0,0" Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="4 现场条件与执行计划" FontSize="18" FontWeight="Bold" Foreground="#1E293B"/>
+                        <TextBlock Text="4、现场条件与执行计划" FontSize="18" FontWeight="Bold" Foreground="#1E293B" Margin="0,0,0,0"/>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="120"/><ColumnDefinition Width="150"/><ColumnDefinition Width="120"/><ColumnDefinition Width="150"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
                             <TextBlock Text="环境温度 (℃) *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AmbientTemperatureTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>

@@ -16,7 +16,6 @@ namespace UpperComInspectionInstrument2022.Services
         private const string SummaryFileName = "作业摘要.csv";
         private const string TaskFileName = "任务信息.csv";
         private const string ResultFileName = "校准结果.csv";
-        private const string UncertaintyFileName = "不确定度分量.csv";
         private const string ReportDirectoryName = "报告";
         private const string CertificateFileName = "校准证书.docx";
         private const int ContentWidth = 9360;
@@ -27,7 +26,7 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>
         /// 检查归档状态和必需文件，生成证书后重新打开并执行 OpenXML 结构验证。
-        /// 数据格式 1.1 必须包含不确定度分量；1.0 历史作业允许生成，但会明确标注追溯限制。
+        /// 报告只读取作业摘要、任务信息和校准结果，最终扩展不确定度已固化在校准结果中。
         /// </summary>
         public bool TryGenerate(string jobDirectory, out string certificatePath, out string error)
         {
@@ -49,7 +48,6 @@ namespace UpperComInspectionInstrument2022.Services
             string summaryPath = Path.Combine(fullJobDirectory, SummaryFileName);
             string taskPath = Path.Combine(fullJobDirectory, TaskFileName);
             string resultPath = Path.Combine(fullJobDirectory, ResultFileName);
-            string uncertaintyPath = Path.Combine(fullJobDirectory, UncertaintyFileName);
             foreach (string requiredPath in new[] { summaryPath, taskPath, resultPath })
             {
                 if (File.Exists(requiredPath)) continue;
@@ -66,19 +64,8 @@ namespace UpperComInspectionInstrument2022.Services
                     return false;
                 }
 
-                bool requiresUncertaintyFile = Version.TryParse(Get(summary, "数据格式版本", "1.0"), out Version? version) &&
-                                               version.CompareTo(new Version(1, 1)) >= 0;
-                if (requiresUncertaintyFile && !File.Exists(uncertaintyPath))
-                {
-                    error = $"作业归档不完整，数据格式 {version} 必须包含文件：{UncertaintyFileName}";
-                    return false;
-                }
-
                 Dictionary<string, string> task = ToPairDictionary(CalibrationFileStorageService.ReadCsvFile(taskPath));
                 List<string[]> resultRows = CalibrationFileStorageService.ReadCsvFile(resultPath);
-                List<string[]> uncertaintyRows = File.Exists(uncertaintyPath)
-                    ? CalibrationFileStorageService.ReadCsvFile(uncertaintyPath)
-                    : new List<string[]>();
 
                 string reportDirectory = Path.Combine(fullJobDirectory, ReportDirectoryName);
                 Directory.CreateDirectory(reportDirectory);
@@ -86,7 +73,7 @@ namespace UpperComInspectionInstrument2022.Services
                 string temporaryPath = Path.Combine(reportDirectory, $".{Guid.NewGuid():N}.校准证书.tmp.docx");
                 try
                 {
-                    CreateCertificate(temporaryPath, summary, task, resultRows, uncertaintyRows);
+                    CreateCertificate(temporaryPath, summary, task, resultRows);
                     ValidateCertificate(temporaryPath);
                     File.Move(temporaryPath, certificatePath, overwrite: true);
                 }
@@ -111,8 +98,7 @@ namespace UpperComInspectionInstrument2022.Services
             string path,
             IReadOnlyDictionary<string, string> summary,
             IReadOnlyDictionary<string, string> task,
-            IReadOnlyList<string[]> resultRows,
-            IReadOnlyList<string[]> uncertaintyRows)
+            IReadOnlyList<string[]> resultRows)
         {
             using WordprocessingDocument document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
             document.PackageProperties.Title = "单工况校准证书";
@@ -176,15 +162,9 @@ namespace UpperComInspectionInstrument2022.Services
 
             body.Append(Heading("三、校准结果"));
             body.Append(ResultTable(resultRows));
-            body.Append(Heading("四、测量不确定度摘要"));
-            W.Table? uncertaintyTable = BuildUncertaintySummaryTable(uncertaintyRows);
-            if (uncertaintyTable != null)
-                body.Append(uncertaintyTable);
-            else
-                body.Append(Callout("该历史归档未保存结构化不确定度分量，证书只能展示校准结果文件中的最终量值；签发前应查验原始评定资料。"));
             body.Append(Paragraph("以上量值来自本次作业的正式样本和规范计算结果；实时趋势数据不参与正式结果计算。", "Note"));
 
-            body.Append(Heading("五、声明与签发"));
+            body.Append(Heading("四、声明与签发"));
             body.Append(Paragraph(
                 "本证书所列校准结果仅对本次被校对象、所列布点和正式样本有效。签发前应核验原始记录、测量标准溯源状态、结果和签字信息。未经实验室书面批准，不得部分复制本证书。",
                 "Normal"));
@@ -730,37 +710,6 @@ namespace UpperComInspectionInstrument2022.Services
             int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0
                 ? parsed
                 : 0;
-
-        /// <summary>按结果项目和评定点汇总不确定度 CSV，避免在证书中重复列出每个分量。</summary>
-        private static W.Table? BuildUncertaintySummaryTable(IReadOnlyList<string[]> rows)
-        {
-            if (rows.Count < 2) return null;
-            Dictionary<string, int> columns = rows[0]
-                .Select((name, index) => (name, index))
-                .Where(item => !string.IsNullOrWhiteSpace(item.name))
-                .ToDictionary(item => item.name, item => item.index, StringComparer.Ordinal);
-            string[] required = { "结果项目", "评定点", "合成标准不确定度uc", "包含因子k", "扩展不确定度U", "合成依据" };
-            if (required.Any(name => !columns.ContainsKey(name))) return null;
-
-            List<string[]> display = new() { new[] { "结果项目 / 评定点", "uc", "k", "U", "评定依据" } };
-            HashSet<string> seen = new(StringComparer.Ordinal);
-            foreach (string[] row in rows.Skip(1))
-            {
-                string key = $"{Cell(row, columns["结果项目"])}|{Cell(row, columns["评定点"])}";
-                if (string.IsNullOrWhiteSpace(key.Replace("|", string.Empty, StringComparison.Ordinal)) || !seen.Add(key)) continue;
-                display.Add(new[]
-                {
-                    key.Replace("|", " / ", StringComparison.Ordinal),
-                    FormatResultValue(Cell(row, columns["合成标准不确定度uc"])),
-                    Cell(row, columns["包含因子k"]),
-                    FormatResultValue(Cell(row, columns["扩展不确定度U"])),
-                    Cell(row, columns["合成依据"])
-                });
-            }
-            return display.Count > 1
-                ? Table(display, new[] { 2400, 950, 650, 950, 4410 }, headerRow: true, centeredColumns: new HashSet<int> { 1, 2, 3 })
-                : null;
-        }
 
         /// <summary>创建校准员、核验员和批准人的签字区域。</summary>
         private static W.Table SignatureTable(IReadOnlyDictionary<string, string> task)

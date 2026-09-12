@@ -65,25 +65,25 @@
                 <Border Margin="0,14,0,0" Padding="20" Background="White" CornerRadius="8" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
                         <TextBlock Text="测量能力与溯源参数" FontSize="18" FontWeight="SemiBold" Foreground="#1F2937"/>
-                        <TextBlock Text="JJF 1101 要求量程覆盖任务范围、温度分辨力不低于 0.01 ℃、湿度分辨力不低于 0.1 %RH；JJF 1376 要求测温仪器不低于 0.02 级。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
-                        <Grid Margin="0,18,0,0">
+                        <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
                             <TextBlock Text="温度量程" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureRangeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
-                            <TextBlock Grid.Column="2" Text="湿度量程" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityRangeTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                            <TextBlock x:Name="HumidityRangeLabel" Grid.Column="2" Text="湿度量程" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityRangeTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
                             <TextBlock Text="温度分辨力 (℃)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureResolutionTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
-                            <TextBlock Grid.Column="2" Text="湿度分辨力 (%RH)" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityResolutionTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                            <TextBlock x:Name="HumidityResolutionLabel" Grid.Column="2" Text="湿度分辨力 (%RH)" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="HumidityResolutionTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
                         </Grid>
-                        <Grid Margin="0,12,0,0">
+                        <Grid x:Name="Jjf1101AccuracyPanel" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="820"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="规范准确度/MPE" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="AccuracySpecificationTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" IsReadOnly="True" Background="#F8FAFC"/>
+                        </Grid>
+                        <Grid x:Name="Jjf1376InstrumentPanel" Margin="0,12,0,0" Visibility="Collapsed">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="准确度/MPE" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AccuracySpecificationTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
-                            <TextBlock Grid.Column="2" Text="测温仪器级别" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="MeasuringInstrumentClassTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
-                        </Grid>
-                        <Grid Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="热电偶等级" Style="{StaticResource FieldLabel}"/><TextBox x:Name="ThermocoupleGradeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Text="测温仪器级别" Style="{StaticResource FieldLabel}"/><TextBox x:Name="MeasuringInstrumentClassTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" IsReadOnly="True" Background="#F8FAFC"/>
+                            <TextBlock Grid.Column="2" Text="热电偶等级" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="ThermocoupleGradeTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" IsReadOnly="True" Background="#F8FAFC"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -93,16 +93,16 @@
                         <TextBlock Text="证书不确定度与通道修正" FontSize="18" FontWeight="SemiBold" Foreground="#1F2937"/>
                         <TextBlock Text="这里填写证书给出的扩展不确定度 U 和包含因子 k。通道修正格式示例：1:0.02,2:-0.01；留空表示数据已修正或暂未录入。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
                         <Grid Margin="0,16,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="CertificateParameterGapColumn" Width="18"/><ColumnDefinition x:Name="HumidityCertificateColumn" Width="*"/></Grid.ColumnDefinitions>
                             <Border Padding="14" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
                                     <TextBlock Text="温度证书参数" Foreground="#334155" FontWeight="SemiBold"/>
                                     <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="150"/></Grid.ColumnDefinitions><TextBlock Text="扩展不确定度 U (℃)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureUncertaintyTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/></Grid>
                                     <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="150"/></Grid.ColumnDefinitions><TextBlock Text="包含因子 k" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureCoverageTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/></Grid>
-                                    <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="150"/></Grid.ColumnDefinitions><TextBlock Text="修正值最大变化 (℃)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureStabilityChangeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/></Grid>
+                                    <Grid x:Name="TemperatureStabilityChangeRow" Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="150"/></Grid.ColumnDefinitions><TextBlock Text="修正值最大变化 (℃)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureStabilityChangeTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/></Grid>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Padding="14" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6">
+                            <Border x:Name="HumidityCertificatePanel" Grid.Column="2" Padding="14" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
                                     <TextBlock Text="湿度证书参数" Foreground="#334155" FontWeight="SemiBold"/>
                                     <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="150"/></Grid.ColumnDefinitions><TextBlock Text="扩展不确定度 U (%RH)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="HumidityUncertaintyTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/></Grid>
@@ -115,7 +115,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="820"/></Grid.ColumnDefinitions>
                             <TextBlock Text="温度通道修正" Style="{StaticResource FieldLabel}"/><TextBox x:Name="TemperatureCorrectionsTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
                         </Grid>
-                        <Grid Margin="0,12,0,0">
+                        <Grid x:Name="HumidityCorrectionsGrid" Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*" MaxWidth="820"/></Grid.ColumnDefinitions>
                             <TextBlock Text="湿度通道修正" Style="{StaticResource FieldLabel}"/><TextBox x:Name="HumidityCorrectionsTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
                         </Grid>

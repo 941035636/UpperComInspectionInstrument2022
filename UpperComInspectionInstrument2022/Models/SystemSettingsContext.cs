@@ -9,6 +9,12 @@ namespace UpperComInspectionInstrument2022.Models
     /// </summary>
     public static class SystemSettingsContext
     {
+        /// <summary>JJF 1101-2019 表2规定的测量标准最大允许误差。</summary>
+        public const string Jjf1101AccuracyRequirement = "温度 MPE ±(0.15 ℃+0.002|t|)；湿度 MPE ±2.0 %RH";
+        /// <summary>JJF 1376-2012 表2规定的最低测温仪器级别。</summary>
+        public const double Jjf1376InstrumentClassRequirement = 0.02;
+        /// <summary>JJF 1376-2012 表2规定的热电偶等级要求。</summary>
+        public const string Jjf1376ThermocoupleGradeRequirement = "廉金属不低于1级；贵金属不低于2级";
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "IndustrialEquipmentCalibration",
@@ -27,9 +33,9 @@ namespace UpperComInspectionInstrument2022.Models
         public static string HumidityRange { get; set; } = "10 %RH～100 %RH";
         public static double TemperatureResolution { get; set; } = 0.01;
         public static double HumidityResolution { get; set; } = 0.1;
-        public static string AccuracySpecification { get; set; } = "温度 MPE ±(0.15 ℃+0.002|t|)；湿度 MPE ±2.0 %RH";
-        public static string ThermocoupleGrade { get; set; } = "廉金属不低于1级；贵金属不低于2级";
-        public static double MeasuringInstrumentClass { get; set; } = 0.02;
+        public static string AccuracySpecification { get; set; } = Jjf1101AccuracyRequirement;
+        public static string ThermocoupleGrade { get; set; } = Jjf1376ThermocoupleGradeRequirement;
+        public static double MeasuringInstrumentClass { get; set; } = Jjf1376InstrumentClassRequirement;
         /// <summary>格式示例：1:0.02,2:-0.01；空白表示当前数据已按证书修正或尚未录入。</summary>
         public static string TemperatureChannelCorrections { get; set; } = string.Empty;
         public static string HumidityChannelCorrections { get; set; } = string.Empty;
@@ -65,9 +71,10 @@ namespace UpperComInspectionInstrument2022.Models
                 HumidityRange = snapshot.HumidityRange ?? HumidityRange;
                 TemperatureResolution = snapshot.TemperatureResolution > 0 ? snapshot.TemperatureResolution : TemperatureResolution;
                 HumidityResolution = snapshot.HumidityResolution > 0 ? snapshot.HumidityResolution : HumidityResolution;
-                AccuracySpecification = snapshot.AccuracySpecification ?? AccuracySpecification;
-                ThermocoupleGrade = snapshot.ThermocoupleGrade ?? ThermocoupleGrade;
-                MeasuringInstrumentClass = snapshot.MeasuringInstrumentClass > 0 ? snapshot.MeasuringInstrumentClass : MeasuringInstrumentClass;
+                // 这三项是规范固定值，不允许旧版本配置或用户文件覆盖。
+                AccuracySpecification = Jjf1101AccuracyRequirement;
+                ThermocoupleGrade = Jjf1376ThermocoupleGradeRequirement;
+                MeasuringInstrumentClass = Jjf1376InstrumentClassRequirement;
                 TemperatureChannelCorrections = snapshot.TemperatureChannelCorrections ?? string.Empty;
                 HumidityChannelCorrections = snapshot.HumidityChannelCorrections ?? string.Empty;
                 TemperatureStabilityChange = snapshot.TemperatureStabilityChange >= 0 ? snapshot.TemperatureStabilityChange : TemperatureStabilityChange;
@@ -138,7 +145,7 @@ namespace UpperComInspectionInstrument2022.Models
             public double HumidityResolution { get; set; } = 0.1;
             public string? AccuracySpecification { get; set; }
             public string? ThermocoupleGrade { get; set; }
-            public double MeasuringInstrumentClass { get; set; } = 0.02;
+            public double MeasuringInstrumentClass { get; set; } = Jjf1376InstrumentClassRequirement;
             public string? TemperatureChannelCorrections { get; set; }
             public string? HumidityChannelCorrections { get; set; }
             public double TemperatureStabilityChange { get; set; } = 0.10;

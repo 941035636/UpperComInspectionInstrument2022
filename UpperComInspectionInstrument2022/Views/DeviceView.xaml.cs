@@ -11,16 +11,26 @@ namespace UpperComInspectionInstrument2022.Views
     /// </summary>
     public partial class DeviceView : Page
     {
-        /// <summary>初始化页面并从 <see cref="SystemSettingsContext"/> 回填当前设置。</summary>
-        public DeviceView()
+        private readonly int _standardIndex;
+
+        /// <summary>
+        /// 初始化页面并从 <see cref="SystemSettingsContext"/> 回填当前设置。
+        /// <paramref name="preferredStandardIndex"/> 来自任务配置；本页不再提供第二套规范选择，避免任务与设置不一致。
+        /// </summary>
+        public DeviceView(int? preferredStandardIndex = null)
         {
+            _standardIndex = Math.Clamp(
+                preferredStandardIndex ?? CalibrationTaskContext.StandardIndex, 0, 1);
             InitializeComponent();
             LoadSettings();
+            ApplyStandardDefaults();
+            UpdateCapabilityMode();
         }
 
         /// <summary>校验所有数值与通道修正格式，通过后保存到本地系统设置文件。</summary>
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
+            bool isFurnace = IsFurnaceMode;
             if (!TryReadRequiredText(LaboratoryNameTextBox, "实验室名称") ||
                 !TryReadRequiredText(LaboratoryAddressTextBox, "实验室地址") ||
                 !TryReadRequiredText(StandardNameTextBox, "标准器名称") ||
@@ -32,21 +42,29 @@ namespace UpperComInspectionInstrument2022.Views
                 return;
             }
             if (!TryReadPositiveDouble(TemperatureResolutionTextBox, "温度分辨力", out double temperatureResolution) ||
-                !TryReadPositiveDouble(HumidityResolutionTextBox, "湿度分辨力", out double humidityResolution) ||
-                !TryReadPositiveDouble(MeasuringInstrumentClassTextBox, "测温仪器级别", out double instrumentClass) ||
                 !TryReadPositiveDouble(TemperatureUncertaintyTextBox, "温度扩展不确定度", out double temperatureUncertainty) ||
-                !TryReadPositiveDouble(TemperatureCoverageTextBox, "温度包含因子", out double temperatureCoverage) ||
-                !TryReadPositiveDouble(HumidityUncertaintyTextBox, "湿度扩展不确定度", out double humidityUncertainty) ||
-                !TryReadPositiveDouble(HumidityCoverageTextBox, "湿度包含因子", out double humidityCoverage) ||
-                !TryReadNonNegativeDouble(TemperatureStabilityChangeTextBox, "温度修正值最大变化", out double temperatureStabilityChange) ||
-                !TryReadNonNegativeDouble(HumidityStabilityChangeTextBox, "湿度修正值最大变化", out double humidityStabilityChange)) return;
+                !TryReadPositiveDouble(TemperatureCoverageTextBox, "温度包含因子", out double temperatureCoverage)) return;
+
+            double humidityResolution = SystemSettingsContext.HumidityResolution;
+            double humidityUncertainty = SystemSettingsContext.HumidityUncertainty;
+            double humidityCoverage = SystemSettingsContext.HumidityCoverage;
+            double temperatureStabilityChange = SystemSettingsContext.TemperatureStabilityChange;
+            double humidityStabilityChange = SystemSettingsContext.HumidityStabilityChange;
+            if (!isFurnace &&
+                (!TryReadPositiveDouble(HumidityResolutionTextBox, "湿度分辨力", out humidityResolution) ||
+                     !TryReadPositiveDouble(HumidityUncertaintyTextBox, "湿度扩展不确定度", out humidityUncertainty) ||
+                     !TryReadPositiveDouble(HumidityCoverageTextBox, "湿度包含因子", out humidityCoverage) ||
+                     !TryReadNonNegativeDouble(TemperatureStabilityChangeTextBox, "温度修正值最大变化", out temperatureStabilityChange) ||
+                     !TryReadNonNegativeDouble(HumidityStabilityChangeTextBox, "湿度修正值最大变化", out humidityStabilityChange))) return;
+
             if (!ChannelCorrectionService.TryParse(TemperatureCorrectionsTextBox.Text, 50, out _, out string temperatureCorrectionError))
             {
                 MessageBox.Show(temperatureCorrectionError, "温度通道修正", MessageBoxButton.OK, MessageBoxImage.Warning);
                 TemperatureCorrectionsTextBox.Focus();
                 return;
             }
-            if (!ChannelCorrectionService.TryParse(HumidityCorrectionsTextBox.Text, 10, out _, out string humidityCorrectionError))
+            if (!isFurnace &&
+                !ChannelCorrectionService.TryParse(HumidityCorrectionsTextBox.Text, 10, out _, out string humidityCorrectionError))
             {
                 MessageBox.Show(humidityCorrectionError, "湿度通道修正", MessageBoxButton.OK, MessageBoxImage.Warning);
                 HumidityCorrectionsTextBox.Focus();
@@ -66,9 +84,9 @@ namespace UpperComInspectionInstrument2022.Views
             SystemSettingsContext.HumidityRange = HumidityRangeTextBox.Text.Trim();
             SystemSettingsContext.TemperatureResolution = temperatureResolution;
             SystemSettingsContext.HumidityResolution = humidityResolution;
-            SystemSettingsContext.AccuracySpecification = AccuracySpecificationTextBox.Text.Trim();
-            SystemSettingsContext.ThermocoupleGrade = ThermocoupleGradeTextBox.Text.Trim();
-            SystemSettingsContext.MeasuringInstrumentClass = instrumentClass;
+            SystemSettingsContext.AccuracySpecification = SystemSettingsContext.Jjf1101AccuracyRequirement;
+            SystemSettingsContext.ThermocoupleGrade = SystemSettingsContext.Jjf1376ThermocoupleGradeRequirement;
+            SystemSettingsContext.MeasuringInstrumentClass = SystemSettingsContext.Jjf1376InstrumentClassRequirement;
             SystemSettingsContext.TemperatureChannelCorrections = TemperatureCorrectionsTextBox.Text.Trim();
             SystemSettingsContext.HumidityChannelCorrections = HumidityCorrectionsTextBox.Text.Trim();
             SystemSettingsContext.TemperatureStabilityChange = temperatureStabilityChange;
@@ -80,6 +98,41 @@ namespace UpperComInspectionInstrument2022.Views
             SystemSettingsContext.Save();
             StatusTextBlock.Text = "系统资料已保存，新建或重新保存任务时会引用最新快照。";
             StatusTextBlock.Foreground = System.Windows.Media.Brushes.DarkGreen;
+        }
+
+        /// <summary>
+        /// 按任务配置页选择的规范显示对应字段，用户无需也不能在系统设置中再次选择规范。
+        /// </summary>
+        private void UpdateCapabilityMode()
+        {
+            bool isFurnace = IsFurnaceMode;
+            Visibility environmentVisibility = isFurnace ? Visibility.Collapsed : Visibility.Visible;
+            Visibility furnaceVisibility = isFurnace ? Visibility.Visible : Visibility.Collapsed;
+
+            Jjf1101AccuracyPanel.Visibility = environmentVisibility;
+            Jjf1376InstrumentPanel.Visibility = furnaceVisibility;
+            HumidityRangeLabel.Visibility = environmentVisibility;
+            HumidityRangeTextBox.Visibility = environmentVisibility;
+            HumidityResolutionLabel.Visibility = environmentVisibility;
+            HumidityResolutionTextBox.Visibility = environmentVisibility;
+            HumidityCertificatePanel.Visibility = environmentVisibility;
+            HumidityCorrectionsGrid.Visibility = environmentVisibility;
+            TemperatureStabilityChangeRow.Visibility = environmentVisibility;
+            CertificateParameterGapColumn.Width = isFurnace ? new GridLength(0) : new GridLength(18);
+            HumidityCertificateColumn.Width = isFurnace ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        }
+
+        /// <summary>当前任务是否采用 JJF 1376 箱式电阻炉规范。</summary>
+        private bool IsFurnaceMode =>
+            _standardIndex == CalibrationStandardRuleService.Jjf1376Index;
+
+        /// <summary>把规范固定值写入只读字段，历史配置中的旧值不会覆盖当前规范要求。</summary>
+        private void ApplyStandardDefaults()
+        {
+            AccuracySpecificationTextBox.Text = SystemSettingsContext.Jjf1101AccuracyRequirement;
+            MeasuringInstrumentClassTextBox.Text =
+                SystemSettingsContext.Jjf1376InstrumentClassRequirement.ToString("0.###");
+            ThermocoupleGradeTextBox.Text = SystemSettingsContext.Jjf1376ThermocoupleGradeRequirement;
         }
 
         /// <summary>把当前系统上下文逐项显示到输入控件。</summary>
@@ -100,7 +153,9 @@ namespace UpperComInspectionInstrument2022.Views
             HumidityResolutionTextBox.Text = SystemSettingsContext.HumidityResolution.ToString("0.###");
             AccuracySpecificationTextBox.Text = SystemSettingsContext.AccuracySpecification;
             ThermocoupleGradeTextBox.Text = SystemSettingsContext.ThermocoupleGrade;
-            MeasuringInstrumentClassTextBox.Text = SystemSettingsContext.MeasuringInstrumentClass.ToString("0.###");
+            MeasuringInstrumentClassTextBox.Text = SystemSettingsContext.MeasuringInstrumentClass > 0
+                ? SystemSettingsContext.MeasuringInstrumentClass.ToString("0.###")
+                : string.Empty;
             TemperatureCorrectionsTextBox.Text = SystemSettingsContext.TemperatureChannelCorrections;
             HumidityCorrectionsTextBox.Text = SystemSettingsContext.HumidityChannelCorrections;
             TemperatureStabilityChangeTextBox.Text = SystemSettingsContext.TemperatureStabilityChange.ToString("0.###");

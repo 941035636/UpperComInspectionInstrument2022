@@ -17,6 +17,9 @@ namespace UpperComInspectionInstrument2022.Views
     {
         private bool _loading;
 
+        /// <summary>任务配置页当前选择的规范索引，供系统设置页自动绑定使用。</summary>
+        public int SelectedStandardIndex => Math.Clamp(StandardComboBox.SelectedIndex, 0, 1);
+
         /// <summary>初始化下拉选项，恢复上次任务，并应用当前规范规则。</summary>
         public SchemeView()
         {
@@ -360,8 +363,14 @@ namespace UpperComInspectionInstrument2022.Views
             StandardReferenceTextBlock.Text = $"{standardName} · {certificate} · {validity}";
             bool isFurnace = StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index;
             bool includesHumidity = !isFurnace && CalibrationTypeComboBox.SelectedIndex == 1;
+            string measuringInstrumentClass = SystemSettingsContext.MeasuringInstrumentClass > 0
+                ? $"{SystemSettingsContext.MeasuringInstrumentClass:0.###} 级"
+                : "级别未填写";
+            string thermocoupleGrade = string.IsNullOrWhiteSpace(SystemSettingsContext.ThermocoupleGrade)
+                ? "未填写"
+                : SystemSettingsContext.ThermocoupleGrade;
             StandardCapabilityTextBlock.Text = isFurnace
-                ? $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / {SystemSettingsContext.MeasuringInstrumentClass:0.###} 级；热电偶 {SystemSettingsContext.ThermocoupleGrade}；U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}"
+                ? $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / 测温仪器{measuringInstrumentClass}；热电偶 {thermocoupleGrade}；U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}"
                 : includesHumidity
                     ? $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}；湿度 {SystemSettingsContext.HumidityRange} / {SystemSettingsContext.HumidityResolution:0.###} %RH / U={SystemSettingsContext.HumidityUncertainty:0.###}, k={SystemSettingsContext.HumidityCoverage:0.###}"
                     : $"温度 {SystemSettingsContext.TemperatureRange} / {SystemSettingsContext.TemperatureResolution:0.###} ℃ / U={SystemSettingsContext.TemperatureUncertainty:0.###}, k={SystemSettingsContext.TemperatureCoverage:0.###}";
@@ -370,7 +379,8 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>跳转到系统设置维护标准器和证书资料。</summary>
         private void OpenSystemSettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowSettingsPage();
+            if (Application.Current.MainWindow is MainWindow mainWindow)
+                mainWindow.ShowSettingsPage(StandardComboBox.SelectedIndex);
         }
 
         /// <summary>

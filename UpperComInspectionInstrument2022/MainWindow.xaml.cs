@@ -130,12 +130,16 @@ namespace UpperComInspectionInstrument2022
         }
 
         /// <summary>
-        /// 显示设备、标准器和环境条件等系统级设置。
+        /// 显示实验室与标准器等系统级设置。
+        /// 优先使用任务配置页当前选项，否则使用已保存任务规范；设置页不再重复选择规范。
         /// </summary>
-        public void ShowSettingsPage()
+        public void ShowSettingsPage(int? preferredStandardIndex = null)
         {
+            int standardIndex = preferredStandardIndex
+                ?? (MainFrame.Content as SchemeView)?.SelectedStandardIndex
+                ?? CalibrationTaskContext.StandardIndex;
             SetActiveNavigation(SettingsButton);
-            MainFrame.Navigate(new DeviceView());
+            MainFrame.Navigate(new DeviceView(standardIndex));
             SetStatus("已进入系统设置");
         }
 

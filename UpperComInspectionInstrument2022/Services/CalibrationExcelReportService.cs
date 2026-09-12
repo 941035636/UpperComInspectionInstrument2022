@@ -16,9 +16,7 @@ namespace UpperComInspectionInstrument2022.Services
         private const string SummaryFileName = "作业摘要.csv";
         private const string TaskFileName = "任务信息.csv";
         private const string SampleFileName = "正式采样.csv";
-        private const string RawChannelFileName = "正式采样原始通道.csv";
         private const string ResultFileName = "校准结果.csv";
-        private const string UncertaintyFileName = "不确定度分量.csv";
         private const string ReportDirectoryName = "报告";
         private const string ReportFileName = "校准原始记录.xlsx";
 
@@ -27,7 +25,8 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>
         /// 验证作业归档完整性，从固化 CSV 生成可用 Excel/WPS 打开的原始记录工作簿。
-        /// 1.0 历史作业没有不确定度分量文件时仍允许生成，并在工作表中明确标记该追溯限制。
+        /// 新格式只要求作业摘要、任务信息、正式采样和校准结果四份业务 CSV；
+        /// 旧作业附带的原始通道与不确定度分量文件不再是报告生成前提。
         /// 写入先落到临时文件，结构验证通过后才覆盖正式报告。
         /// </summary>
         public bool TryGenerate(string jobDirectory, out string reportPath, out string error)
@@ -50,11 +49,9 @@ namespace UpperComInspectionInstrument2022.Services
             string summaryPath = Path.Combine(fullJobDirectory, SummaryFileName);
             string taskPath = Path.Combine(fullJobDirectory, TaskFileName);
             string samplePath = Path.Combine(fullJobDirectory, SampleFileName);
-            string rawPath = Path.Combine(fullJobDirectory, RawChannelFileName);
             string resultPath = Path.Combine(fullJobDirectory, ResultFileName);
-            string uncertaintyPath = Path.Combine(fullJobDirectory, UncertaintyFileName);
 
-            foreach (string requiredPath in new[] { summaryPath, taskPath, samplePath, rawPath, resultPath })
+            foreach (string requiredPath in new[] { summaryPath, taskPath, samplePath, resultPath })
             {
                 if (File.Exists(requiredPath)) continue;
                 error = $"作业归档不完整，缺少文件：{Path.GetFileName(requiredPath)}";
@@ -66,7 +63,6 @@ namespace UpperComInspectionInstrument2022.Services
                 List<string[]> summaryRows = CalibrationFileStorageService.ReadCsvFile(summaryPath);
                 List<string[]> taskRows = CalibrationFileStorageService.ReadCsvFile(taskPath);
                 List<string[]> sampleRows = CalibrationFileStorageService.ReadCsvFile(samplePath);
-                List<string[]> rawRows = CalibrationFileStorageService.ReadCsvFile(rawPath);
                 List<string[]> resultRows = CalibrationFileStorageService.ReadCsvFile(resultPath);
                 Dictionary<string, string> summary = ToHeaderDictionary(summaryRows);
                 if (!summary.TryGetValue("状态", out string? status) || status != "已完成")
@@ -74,25 +70,14 @@ namespace UpperComInspectionInstrument2022.Services
                     error = $"只有状态为“已完成”的作业才能生成正式 Excel 原始记录，当前状态：{status ?? "未知"}。";
                     return false;
                 }
-                bool requiresUncertaintyFile = Version.TryParse(Get(summary, "数据格式版本", "1.0"), out Version? dataVersion) &&
-                                               dataVersion.CompareTo(new Version(1, 1)) >= 0;
-                if (requiresUncertaintyFile && !File.Exists(uncertaintyPath))
-                {
-                    error = $"作业归档不完整，数据格式 {dataVersion} 必须包含文件：{UncertaintyFileName}";
-                    return false;
-                }
-
                 Dictionary<string, string> task = ToPairDictionary(taskRows);
-                List<string[]> uncertaintyRows = File.Exists(uncertaintyPath)
-                    ? CalibrationFileStorageService.ReadCsvFile(uncertaintyPath)
-                    : BuildLegacyUncertaintyRows(summary);
                 string reportDirectory = Path.Combine(fullJobDirectory, ReportDirectoryName);
                 Directory.CreateDirectory(reportDirectory);
                 reportPath = Path.Combine(reportDirectory, ReportFileName);
                 string temporaryPath = Path.Combine(reportDirectory, $".{ReportFileName}.{Guid.NewGuid():N}.tmp");
                 try
                 {
-                    CreateWorkbook(temporaryPath, summary, task, sampleRows, rawRows, resultRows, uncertaintyRows);
+                    CreateWorkbook(temporaryPath, summary, task, sampleRows, resultRows);
                     ValidateWorkbook(temporaryPath);
                     File.Move(temporaryPath, reportPath, overwrite: true);
                 }
@@ -112,15 +97,13 @@ namespace UpperComInspectionInstrument2022.Services
             }
         }
 
-        /// <summary>创建工作簿、公共样式以及五个固定工作表。</summary>
+        /// <summary>创建规范记录、正式采样和任务快照三个工作表。</summary>
         private static void CreateWorkbook(
             string path,
             IReadOnlyDictionary<string, string> summary,
             IReadOnlyDictionary<string, string> task,
             IReadOnlyList<string[]> sampleRows,
-            IReadOnlyList<string[]> rawRows,
-            IReadOnlyList<string[]> resultRows,
-            IReadOnlyList<string[]> uncertaintyRows)
+            IReadOnlyList<string[]> resultRows)
         {
             using SpreadsheetDocument document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
             WorkbookPart workbookPart = document.AddWorkbookPart();
@@ -137,24 +120,18 @@ namespace UpperComInspectionInstrument2022.Services
             {
                 AddJjf1101RecordSheet(workbookPart, sheets, sheetId++, summary, task, sampleRows, resultRows);
                 AddCsvSheet(workbookPart, sheets, sheetId++, "正式采样", sampleRows, freezeTopRow: true, hidden: true);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "原始通道", rawRows, freezeTopRow: true, hidden: true);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "不确定度分量", uncertaintyRows, freezeTopRow: true, hidden: true);
                 AddCsvSheet(workbookPart, sheets, sheetId, "任务快照", BuildTaskSnapshotRows(task), freezeTopRow: true, hidden: true);
             }
             else if (isJjf1376)
             {
-                AddJjf1376RecordSheet(workbookPart, sheets, sheetId++, summary, task, sampleRows, rawRows, resultRows);
+                AddJjf1376RecordSheet(workbookPart, sheets, sheetId++, summary, task, sampleRows, resultRows);
                 AddCsvSheet(workbookPart, sheets, sheetId++, "正式采样", sampleRows, freezeTopRow: true, hidden: true);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "原始通道", rawRows, freezeTopRow: true, hidden: true);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "不确定度分量", uncertaintyRows, freezeTopRow: true, hidden: true);
                 AddCsvSheet(workbookPart, sheets, sheetId, "任务快照", BuildTaskSnapshotRows(task), freezeTopRow: true, hidden: true);
             }
             else
             {
                 AddSummarySheet(workbookPart, sheets, sheetId++, summary, task, resultRows);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "不确定度分量", uncertaintyRows, freezeTopRow: true);
                 AddCsvSheet(workbookPart, sheets, sheetId++, "正式采样", sampleRows, freezeTopRow: true);
-                AddCsvSheet(workbookPart, sheets, sheetId++, "原始通道", rawRows, freezeTopRow: true);
                 AddCsvSheet(workbookPart, sheets, sheetId, "任务快照", BuildTaskSnapshotRows(task), freezeTopRow: true);
             }
             workbookPart.Workbook.CalculationProperties = new CalculationProperties { CalculationMode = CalculateModeValues.Auto };
@@ -172,7 +149,6 @@ namespace UpperComInspectionInstrument2022.Services
             IReadOnlyDictionary<string, string> summary,
             IReadOnlyDictionary<string, string> task,
             IReadOnlyList<string[]> sampleRows,
-            IReadOnlyList<string[]> rawRows,
             IReadOnlyList<string[]> resultRows)
         {
             WorksheetPart part = workbookPart.AddNewPart<WorksheetPart>();
@@ -184,7 +160,7 @@ namespace UpperComInspectionInstrument2022.Services
                 .Select(item => item.index).ToArray();
             int columnCount = Math.Max(10, temperatureColumns.Length + 1);
             uint rowIndex = 1;
-            Dictionary<(int Sample, int Point), (double? Raw, double? Correction)> rawLookup = BuildFurnaceRawLookup(rawRows);
+            Dictionary<int, double> corrections = ParseTemperatureCorrections(task);
 
             AppendMergedRow(data, merges, ref rowIndex, columnCount, "JJF 1376—2012", 11U, 20);
             //AppendMergedRow(data, merges, ref rowIndex, columnCount, "附录 A", 18U, 20, HorizontalAlignmentValues.Left);
@@ -245,14 +221,16 @@ namespace UpperComInspectionInstrument2022.Services
                 for (int point = 0; point < temperatureColumns.Length; point++)
                 {
                     double? actual = TryNumber(sourceRow, temperatureColumns[point]);
-                    rawLookup.TryGetValue((sampleNumber, point + 1), out (double? Raw, double? Correction) trace);
-                    double? measured = trace.Raw ?? actual;
+                    double correction = corrections.TryGetValue(point + 1, out double configuredCorrection)
+                        ? configuredCorrection
+                        : 0;
+                    double? measured = actual.HasValue ? actual.Value - correction : null;
                     if (measured.HasValue)
                     {
                         rawByPoint[point].Add(measured.Value);
                         SetCell(row, point + 2, measured.Value, 19U);
                     }
-                    if (trace.Correction.HasValue) correctionByPoint[point].Add(trace.Correction.Value);
+                    if (actual.HasValue) correctionByPoint[point].Add(correction);
                     if (actual.HasValue) actualByPoint[point].Add(actual.Value);
                 }
                 data.Append(row);
@@ -295,23 +273,16 @@ namespace UpperComInspectionInstrument2022.Services
             sheets.Append(new Sheet { Id = workbookPart.GetIdOfPart(part), SheetId = sheetId, Name = "校准记录" });
         }
 
-        /// <summary>从原始通道 CSV 取得每组、每点的修正前读数和证书修正值。</summary>
-        private static Dictionary<(int Sample, int Point), (double? Raw, double? Correction)> BuildFurnaceRawLookup(IReadOnlyList<string[]> rows)
+        /// <summary>从任务快照读取各温度通道的证书修正值，用于还原箱式炉记录中的修正前读数。</summary>
+        private static Dictionary<int, double> ParseTemperatureCorrections(IReadOnlyDictionary<string, string> task)
         {
-            Dictionary<(int Sample, int Point), (double? Raw, double? Correction)> result = new();
-            if (rows.Count < 2) return result;
-            Dictionary<string, int> columns = rows[0].Select((name, index) => (name, index))
-                .ToDictionary(item => item.name, item => item.index, StringComparer.Ordinal);
-            string[] required = { "样本序号", "通道类型", "通道号", "修正前原始值", "证书修正值", "数据是否有效" };
-            if (required.Any(name => !columns.ContainsKey(name))) return result;
-            foreach (string[] row in rows.Skip(1))
-            {
-                if (CellText(row, columns["通道类型"]) != "温度" || CellText(row, columns["数据是否有效"]) != "是") continue;
-                if (!int.TryParse(CellText(row, columns["样本序号"]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int sample) ||
-                    !int.TryParse(CellText(row, columns["通道号"]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int point)) continue;
-                result[(sample, point)] = (TryNumber(row, columns["修正前原始值"]), TryNumber(row, columns["证书修正值"]));
-            }
-            return result;
+            return ChannelCorrectionService.TryParse(
+                Get(task, "标准器温度修正值"),
+                50,
+                out Dictionary<int, double> corrections,
+                out _)
+                ? corrections
+                : new Dictionary<int, double>();
         }
 
         /// <summary>追加每个测温点的平均值、修正值或实际温度行。</summary>
@@ -331,9 +302,6 @@ namespace UpperComInspectionInstrument2022.Services
             index >= 0 && index < row.Length && double.TryParse(row[index], NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value)
                 ? value
                 : null;
-
-        /// <summary>安全读取 CSV 指定列文本。</summary>
-        private static string CellText(string[] row, int index) => index >= 0 && index < row.Length ? row[index] : string.Empty;
 
         /// <summary>格式化 JJF 1376 附录 A 中的炉膛 L/W/H。</summary>
         private static string BuildFurnaceSize(IReadOnlyDictionary<string, string> task) =>
@@ -901,8 +869,8 @@ namespace UpperComInspectionInstrument2022.Services
             {
                 string[] source = rows[rowIndex];
                 bool longText = rowIndex > 0 &&
-                                ((name == "任务快照" && source.Any(value => value?.Length > 18)) ||
-                                 (name == "不确定度分量" && source.Any(value => value?.Length > 24)));
+                                name == "任务快照" &&
+                                source.Any(value => value?.Length > 18);
                 Row row = new() { RowIndex = (uint)(rowIndex + 1), Height = rowIndex == 0 ? 28 : longText ? 42 : 20, CustomHeight = true };
                 for (int column = 0; column < columnCount; column++)
                 {
@@ -938,30 +906,6 @@ namespace UpperComInspectionInstrument2022.Services
             List<string[]> rows = new() { new[] { "字段", "值" } };
             rows.AddRange(task.Select(item => new[] { item.Key, item.Value }));
             return rows;
-        }
-
-        /// <summary>
-        /// 为 1.0 旧作业生成明确的兼容提示行。旧归档仍能打开，但不会伪造当时未保存的分量数据。
-        /// </summary>
-        private static List<string[]> BuildLegacyUncertaintyRows(IReadOnlyDictionary<string, string> summary)
-        {
-            return new List<string[]>
-            {
-                new[]
-                {
-                    "结果项目", "评定点", "分量序号", "符号", "不确定度来源", "类别", "分布",
-                    "输入量", "单位", "除数", "除数表达式", "标准不确定度ui", "灵敏系数ci", "贡献ci×ui",
-                    "合成标准不确定度uc", "包含因子k", "扩展不确定度U", "分量依据", "合成依据"
-                },
-                new[]
-                {
-                    "历史归档未保存分量明细", string.Empty, string.Empty, string.Empty,
-                    $"数据格式版本 {Get(summary, "数据格式版本", "1.0")}", string.Empty, string.Empty,
-                    string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty,
-                    string.Empty, string.Empty, string.Empty,
-                    "该作业仅保存最终结果，无法可靠反推各分量。", "请保留原始 CSV，并在具备原始输入时人工复核。"
-                }
-            };
         }
 
         /// <summary>创建“标签—值”交替排列的汇总页行。</summary>
@@ -1233,7 +1177,7 @@ namespace UpperComInspectionInstrument2022.Services
             return result;
         }
 
-        /// <summary>重新打开生成文件并检查五个必需工作表及 JJF 1101 的前台/后台可见性。</summary>
+        /// <summary>重新打开生成文件并检查三个必需工作表及 JJF 1101 的前台/后台可见性。</summary>
         private static void ValidateWorkbook(string path)
         {
             using SpreadsheetDocument document = SpreadsheetDocument.Open(path, false);
@@ -1243,8 +1187,8 @@ namespace UpperComInspectionInstrument2022.Services
             Sheet[] sheets = workbook.GetFirstChild<Sheets>()?.Elements<Sheet>().ToArray() ?? Array.Empty<Sheet>();
             bool isJjf1101 = sheets.Any(sheet => sheet.Name?.Value == "校准记录");
             string[] required = isJjf1101
-                ? new[] { "校准记录", "正式采样", "原始通道", "不确定度分量", "任务快照" }
-                : new[] { "任务与结果", "不确定度分量", "正式采样", "原始通道", "任务快照" };
+                ? new[] { "校准记录", "正式采样", "任务快照" }
+                : new[] { "任务与结果", "正式采样", "任务快照" };
             bool invalidVisibility = isJjf1101 &&
                                      (sheets.Count(sheet => sheet.State?.Value == null || sheet.State.Value == SheetStateValues.Visible) != 1 ||
                                       sheets.Single(sheet => sheet.Name?.Value == "校准记录").State?.Value == SheetStateValues.Hidden);

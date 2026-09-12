@@ -32,7 +32,10 @@ namespace UpperComInspectionInstrument2022.Views
             GenerateWordCertificateButton.IsEnabled = CalibrationTaskContext.HasCompletedCalibration;
             RefreshReportFilesStatus();
             ShowResults();
+
+
         }
+
 
 
         /// <summary>检查正式采样完成状态，执行规范计算并映射到结果卡片。</summary>
@@ -57,9 +60,10 @@ namespace UpperComInspectionInstrument2022.Views
                 ResultHintTextBlock.Text = result.Message;
                 return;
             }
+            //
             SetResultVisualState(ResultVisualState.Success);
             ResultStatusTextBlock.Text = "正式样本已按规范公式完成计算";
-            ResultHintTextBlock.Text = "量值按规范公式计算，不确定度按附录示例的重复性、分辨力、证书修正值和稳定性等分量计算；表中参考技术指标不直接作为合格判据，出证前仍需核验原始记录和分量来源。";
+            ResultHintTextBlock.Text = "量值按规范公式计算，不确定度按附录示例的重复性、分辨力、证书修正值和稳定性等分量计算；";//表中参考技术指标不直接作为合格判据，出证前仍需核验原始记录和分量来源。
 
             if (CalibrationTaskContext.StandardIndex == 1)
             {
@@ -207,6 +211,7 @@ namespace UpperComInspectionInstrument2022.Views
             }
         }
 
+
         /// <summary>按当前作业目录中的实际文件刷新 Excel 原始记录和 Word 校准报告状态。</summary>
         private void RefreshReportFilesStatus()
         {
@@ -218,6 +223,8 @@ namespace UpperComInspectionInstrument2022.Views
             OpenReportButton.Content = excelExists ? "打开原始记录 Excel" : "生成原始记录 Excel";
             GenerateWordCertificateButton.Content = wordExists ? "打开校准报告 Word" : "生成校准报告 Word";
         }
+
+
 
         /// <summary>记录当前作业的报告生成结果，便于历史复核报告由谁在何时生成。</summary>
         private static void WriteReportOperation(string operation, string result, string description, string relatedPath)

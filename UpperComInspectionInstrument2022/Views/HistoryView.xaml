@@ -11,7 +11,7 @@
         <Border Grid.Row="0" Background="White" Padding="28,20" BorderBrush="#D8E0EA" BorderThickness="0,0,0,1">
             <StackPanel>
                 <TextBlock Text="历史记录" FontSize="27" FontWeight="Bold" Foreground="#0F172A"/>
-                <TextBlock Text="选择历史作业后查看原始记录 Excel 或校准报告 Word；内部 CSV 由系统自动保存，无需手动操作。" Margin="0,6,0,0" Foreground="#64748B"/>
+                <!--<TextBlock Text="选择历史作业后查看原始记录 Excel 或校准报告 Word；内部 CSV 由系统自动保存，无需手动操作。" Margin="0,6,0,0" Foreground="#64748B"/>-->
             </StackPanel>
         </Border>
         <Border Grid.Row="1" Margin="28,18,28,0" Padding="14" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="7">
@@ -30,7 +30,7 @@
                 <TextBlock Margin="14,10,14,4" Text="本地校准作业" FontSize="17" FontWeight="SemiBold" Foreground="#0F172A" VerticalAlignment="Center"/>
                 <Grid Grid.Row="1" Margin="14,0,14,10">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="选择一条已完成作业后，可直接生成或打开两类交付文件。" Foreground="#64748B" VerticalAlignment="Center"/>
+                    <!--<TextBlock Text="选择一条已完成作业后，可直接生成或打开两类交付文件。" Foreground="#64748B" VerticalAlignment="Center"/>-->
                     <StackPanel Grid.Column="1" Orientation="Horizontal">
                         <Button x:Name="OpenSelectedJobButton" Content="打开作业目录" Padding="16,8" Margin="0,0,10,0" IsEnabled="False" Click="OpenSelectedJobButton_Click"/>
                         <Button x:Name="GenerateExcelReportButton" Content="原始记录 Excel" MinWidth="150" Padding="16,8" Margin="0,0,10,0" IsEnabled="False" Click="GenerateExcelReportButton_Click"/>

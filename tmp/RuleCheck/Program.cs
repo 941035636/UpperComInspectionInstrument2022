@@ -196,6 +196,8 @@ Assert(Math.Abs(InspectionMeterService.DecodeFloatBigEndian(new byte[] { 0x42, 0
     "protocol float byte order");
 Assert(InspectionMeterService.DecodeSignedHundredths(0x9CFF) == -1.0, "little-endian signed humidity-probe value");
 Assert(InspectionMeterService.DecodeSignedHundredths(0xAC02) == 6.84, "field humidity register byte order");
+Assert(InspectionMeterService.DecodeSignedHundredths(0x00FF) == -2.56,
+    "negative humidity must retain its sign after the register-byte swap");
 
 var primaryTemperature = new InspectionChannelData
 {
@@ -387,27 +389,24 @@ Assert(testStorage.TryAppendSample(storageRecord2, out string appendStorageError
 CalibrationResultSummary storageResult = CalibrationResultCalculator.Calculate();
 Assert(testStorage.TryCompleteJob(storageResult, out string completeStorageError), "storage complete: " + completeStorageError);
 string storageJobDirectory = testStorage.CurrentJobDirectory!;
-foreach (string expectedFile in new[] { "作业摘要.csv", "任务信息.csv", "正式采样.csv", "正式采样原始通道.csv", "校准结果.csv", "不确定度分量.csv" })
+foreach (string expectedFile in new[] { "作业摘要.csv", "任务信息.csv", "正式采样.csv", "校准结果.csv" })
 {
     string expectedPath = Path.Combine(storageJobDirectory, expectedFile);
     Assert(File.Exists(expectedPath), "storage file exists: " + expectedFile);
     byte[] prefix = File.ReadAllBytes(expectedPath).Take(3).ToArray();
     Assert(prefix.SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "storage file UTF-8 BOM: " + expectedFile);
 }
+Assert(!Directory.Exists(Path.Combine(storageJobDirectory, "内部追溯数据")) &&
+       !File.Exists(Path.Combine(storageJobDirectory, "正式采样原始通道.csv")) &&
+       !File.Exists(Path.Combine(storageJobDirectory, "不确定度分量.csv")),
+    "formal job keeps only operator-facing CSV files and does not create an internal trace folder");
 string sampleCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "正式采样.csv"));
 Assert(sampleCsv.Contains("\"温度1(℃)\"") && sampleCsv.Contains("\"19\"") && sampleCsv.Contains("\"22\""),
     "wide sample CSV contains dynamic channel matrix");
-string rawCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "正式采样原始通道.csv"));
-Assert(rawCsv.Contains("\"修正前原始值\"") && rawCsv.Split("\"温度\"").Length - 1 == 18,
-    "raw channel CSV contains one row per formal channel");
 string resultCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "校准结果.csv"));
 Assert(resultCsv.Contains("\"3.000\"") && resultCsv.Contains("\"-2.000\"") &&
        resultCsv.Contains("\"4.000\"") && resultCsv.Contains("\"0.500\""),
     "final calibration result CSV uses fixed three-decimal precision");
-string uncertaintyCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "不确定度分量.csv"));
-Assert(uncertaintyCsv.Contains("\"标准不确定度ui\"") && uncertaintyCsv.Contains("\"合成标准不确定度uc\"") &&
-       uncertaintyCsv.Contains("\"u1\"") && uncertaintyCsv.Contains("JJF 1101-2019 附录C"),
-    "uncertainty CSV contains auditable components, synthesis and standard basis");
 string taskCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "任务信息.csv"));
 Assert(taskCsv.Contains("\"测温仪器级别\"") && taskCsv.Contains("\"热电偶等级\"") && taskCsv.Contains("\"廉金属1级\"") &&
        taskCsv.Contains("\"实验室名称\"") && taskCsv.Contains("\"测试校准实验室\""),
@@ -421,13 +420,14 @@ Assert(File.Exists(generatedExcelPath), "Excel report file exists");
 using (ZipArchive excelArchive = ZipFile.OpenRead(generatedExcelPath))
 {
     Assert(excelArchive.GetEntry("xl/workbook.xml") != null &&
-           excelArchive.Entries.Count(entry => entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal)) == 5,
-        "Excel report contains workbook and five worksheets");
+           excelArchive.Entries.Count(entry => entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal)) == 3,
+        "Excel report contains workbook and three required worksheets");
     using StreamReader workbookReader = new(excelArchive.GetEntry("xl/workbook.xml")!.Open());
     string workbookXml = workbookReader.ReadToEnd();
-    Assert(workbookXml.Contains("校准记录") && workbookXml.Contains("不确定度分量") && workbookXml.Contains("任务快照") &&
-           workbookXml.Split("state=\"hidden\"").Length - 1 == 4,
-        "JJF1101 workbook exposes one Appendix A record sheet and hides four audit-support sheets");
+    Assert(workbookXml.Contains("校准记录") && workbookXml.Contains("正式采样") && workbookXml.Contains("任务快照") &&
+           !workbookXml.Contains("原始通道") && !workbookXml.Contains("不确定度分量") &&
+           workbookXml.Split("state=\"hidden\"").Length - 1 == 2,
+        "JJF1101 workbook exposes one Appendix A record sheet and only two supporting sheets");
     using StreamReader recordReader = new(excelArchive.GetEntry("xl/worksheets/sheet1.xml")!.Open());
     string recordXml = recordReader.ReadToEnd();
     Assert(recordXml.Contains("1 A") && recordXml.Contains("5 O") && recordXml.Contains("8 B") &&
@@ -514,7 +514,7 @@ using (ZipArchive furnaceExcelArchive = ZipFile.OpenRead(furnaceExcelPath))
     string workbookXml = workbookReader.ReadToEnd();
     using StreamReader recordReader = new(furnaceExcelArchive.GetEntry("xl/worksheets/sheet1.xml")!.Open());
     string recordXml = recordReader.ReadToEnd();
-    Assert(workbookXml.Contains("校准记录") && workbookXml.Split("state=\"hidden\"").Length - 1 == 4 &&
+    Assert(workbookXml.Contains("校准记录") && workbookXml.Split("state=\"hidden\"").Length - 1 == 2 &&
            recordXml.Contains("箱式电阻炉校准记录") && recordXml.Contains("修正值") && recordXml.Contains("实际温度") &&
            recordXml.Contains("炉膛尺寸") && recordXml.Contains("测温区尺寸") && recordXml.Contains("炉内最大温差"),
         "JJF1376 Excel follows Appendix A and keeps audit sheets hidden");
@@ -550,29 +550,22 @@ string legacyJobDirectory = Path.Combine(storageTestRoot, "legacy-format-1.0");
 Directory.CreateDirectory(legacyJobDirectory);
 foreach (string sourceFile in Directory.GetFiles(storageJobDirectory, "*.csv"))
     File.Copy(sourceFile, Path.Combine(legacyJobDirectory, Path.GetFileName(sourceFile)), overwrite: true);
-File.Delete(Path.Combine(legacyJobDirectory, "不确定度分量.csv"));
-Assert(!CalibrationExcelReportService.Default.TryGenerate(legacyJobDirectory, out _, out string incomplete11Error) &&
-       incomplete11Error.Contains("必须包含文件"),
-    "format 1.1 archive rejects a missing uncertainty component file");
-Assert(!CalibrationPdfArchiveService.Default.TryGenerate(legacyJobDirectory, out _, out string incomplete11PdfError) &&
-       incomplete11PdfError.Contains("必须包含文件"),
-    "format 1.1 archive rejects PDF generation when uncertainty components are missing");
 string legacySummaryPath = Path.Combine(legacyJobDirectory, "作业摘要.csv");
-string legacySummary = File.ReadAllText(legacySummaryPath).Replace("\"1.1\"", "\"1.0\"", StringComparison.Ordinal);
+string legacySummary = File.ReadAllText(legacySummaryPath).Replace("\"1.2\"", "\"1.0\"", StringComparison.Ordinal);
 File.WriteAllText(legacySummaryPath, legacySummary, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 Assert(CalibrationExcelReportService.Default.TryGenerate(legacyJobDirectory, out string legacyExcelPath, out string legacyExcelError),
     "legacy Excel compatibility: " + legacyExcelError);
 using (ZipArchive legacyExcelArchive = ZipFile.OpenRead(legacyExcelPath))
 {
-    Assert(legacyExcelArchive.Entries.Count(entry => entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal)) == 5,
-        "legacy archive receives an explicit uncertainty limitation worksheet");
+    Assert(legacyExcelArchive.Entries.Count(entry => entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal)) == 3,
+        "legacy archive can rebuild the streamlined three-sheet workbook without technical CSV files");
 }
 Assert(CalibrationWordCertificateService.Default.TryGenerate(legacyJobDirectory, out string legacyWordPath, out string legacyWordError),
     "legacy Word compatibility: " + legacyWordError);
-Assert(File.Exists(legacyWordPath), "legacy archive receives a Word certificate with an uncertainty traceability limitation");
+Assert(File.Exists(legacyWordPath), "legacy archive can rebuild a Word certificate from business CSV files");
 Assert(CalibrationPdfArchiveService.Default.TryGenerate(legacyJobDirectory, out string legacyPdfPath, out string legacyPdfError),
     "legacy PDF compatibility: " + legacyPdfError);
-Assert(File.Exists(legacyPdfPath), "legacy archive receives a PDF report with an uncertainty traceability limitation");
+Assert(File.Exists(legacyPdfPath), "legacy archive can rebuild a PDF report from business CSV files");
 
 CalibrationTaskContext.TemperaturePointCount = 3;
 CalibrationTaskContext.PlannedCount = 2;
@@ -582,9 +575,9 @@ CalibrationSampleRecord incompleteRecord = CalibrationRunContext.Add(Snapshot(20
 Assert(testStorage.TryAppendSample(incompleteRecord, out string incompleteAppendError), "incomplete storage append: " + incompleteAppendError);
 Assert(testStorage.TryMarkInterrupted("自动检查中断状态", out string interruptedStateError), "interrupted state: " + interruptedStateError);
 string incompleteSampleCsv = File.ReadAllText(Path.Combine(testStorage.CurrentJobDirectory!, "正式采样.csv"));
-string incompleteRawCsv = File.ReadAllText(Path.Combine(testStorage.CurrentJobDirectory!, "正式采样原始通道.csv"));
-Assert(incompleteSampleCsv.Contains("\"T3\"") && incompleteRawCsv.Contains("\"Missing\"") && incompleteRawCsv.Contains("\"任务要求通道未返回\""),
-    "missing required channel is explicit in matrix and raw detail");
+Assert(incompleteSampleCsv.Contains("\"T3\"") &&
+       incompleteSampleCsv.TrimEnd().EndsWith(",\"\"", StringComparison.Ordinal),
+    "missing required channel remains explicit in the formal sample matrix without a raw-channel file");
 Assert(testStorage.LoadHistory(status: "已中断").Count == 1, "history identifies interrupted local job");
 
 string realtimeTestRoot = storageTestRoot + "-realtime";
