@@ -35,6 +35,9 @@ namespace UpperComInspectionInstrument2022
         private bool _globalStatusReturnsToWorkbench;
         private bool _logoutRequested;
 
+        /// <summary>供系统设置页判断当前任务快照是否已经进入不可变的正式采样阶段。</summary>
+        public bool IsFormalCalibrationRunning => _realTimePage?.IsFormalCalibrationRunning == true;
+
         /// <summary>用户点击注销并且主窗口已完成资源释放时触发。</summary>
         public event EventHandler? LogoutRequested;
 
@@ -141,6 +144,12 @@ namespace UpperComInspectionInstrument2022
             SetActiveNavigation(SettingsButton);
             MainFrame.Navigate(new DeviceView(standardIndex));
             SetStatus("已进入系统设置");
+        }
+
+        /// <summary>系统资料保存后通知复用中的工作台，使下一组普通实时数据使用最新通道修正。</summary>
+        public void NotifySystemSettingsSaved()
+        {
+            _realTimePage?.NotifySystemSettingsSaved();
         }
 
         /// <summary>

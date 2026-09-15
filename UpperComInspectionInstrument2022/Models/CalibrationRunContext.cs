@@ -15,7 +15,7 @@ namespace UpperComInspectionInstrument2022.Models
         public DateTime Timestamp { get; init; }
         /// <summary>巡检仪在该时刻返回的完整通道快照。</summary>
         public MeasurementSnapshot Snapshot { get; init; } = new();
-        /// <summary>被校设备温度显示值；未录入时为空。</summary>
+        /// <summary>被校设备温度显示值；未录入时为空。</summary> 
         public double? DutDisplayTemperature { get; init; }
         /// <summary>被校设备湿度显示值；未录入或非湿度任务时为空。</summary>
         public double? DutDisplayHumidity { get; init; }

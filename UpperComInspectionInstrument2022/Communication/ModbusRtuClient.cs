@@ -454,7 +454,7 @@ namespace UpperComInspectionInstrument2022.Communication
         }
 
         /// <summary>
-        /// 把字节数组格式化为“01 03 02 ...”，用于日志和错误对话框。
+        /// 把字节数组格式化为“01 03 02 ...”，用于日志和错误对话框。 
         /// </summary>
         public static string BytesToHex(byte[] data)
         {
@@ -473,6 +473,10 @@ namespace UpperComInspectionInstrument2022.Communication
 
             return string.Join(" ", list);
         }
+
+      
+
+
 
         /// <summary>实现 <see cref="IDisposable"/>；释放客户端等价于关闭串口。</summary>
         public void Dispose()

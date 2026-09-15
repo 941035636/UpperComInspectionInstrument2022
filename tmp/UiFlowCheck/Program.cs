@@ -40,6 +40,8 @@ internal static class Program
         Expander optionalArchive = Find<Expander>(taskPage, "OptionalArchiveExpander");
 
         Assert(!optionalArchive.IsExpanded, "optional device/customer archive should be collapsed by default");
+        Assert(taskPage.FindName("CalibrationDateTextBox") == null && taskPage.FindName("CalibrationDatePicker") == null,
+            "task page should not expose the system-generated calibration date");
         Assert(saveTaskButton.Width == 260 && DockPanel.GetDock(saveTaskButton) == Dock.Right &&
                saveTaskButton.Parent is DockPanel { LastChildFill: false },
             "task footer should use a normal-width right-aligned primary action");
@@ -283,6 +285,15 @@ internal static class Program
         if (!workbenchCode.Contains("FormatMeasurementMatrixValue(channel)", StringComparison.Ordinal) ||
             !workbenchCode.Contains("湿度探头伴随温度（诊断，不参与校准）", StringComparison.Ordinal))
             throw new InvalidOperationException("negative humidity and probe-temperature diagnostics should remain visible to the operator");
+        if (!workbenchCode.Contains("ChannelCorrectionService.ApplyForMeasurement", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("SystemSettingsContext.TemperatureChannelCorrections", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CalibrationTaskContext.ReferencedTemperatureCorrections", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CalibrationTaskContext.CalibrationDate = DateTime.Today", StringComparison.Ordinal))
+            throw new InvalidOperationException("workbench should use staged correction sources and refresh the system calibration date when formal sampling starts");
+        if (!workbenchCode.Contains("TryAlignRealtimeIntervalForFormalCalibration", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("RestoreRealtimeIntervalAfterFormalCalibration", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("AdvanceNextCalibrationSampleAt(snapshot.Timestamp", StringComparison.Ordinal))
+            throw new InvalidOperationException("formal sampling should align device polling, restore the realtime interval and avoid cumulative schedule drift");
         Button startAcquisition = Find<Button>(workbench, "StartAcquisitionButton");
         startAcquisition.IsEnabled = true;
         AssertBrush(startAcquisition.Foreground, Colors.White, "primary workbench action should keep readable white text");

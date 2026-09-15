@@ -1,6 +1,7 @@
 using UpperComInspectionInstrument2022.Services;
 using UpperComInspectionInstrument2022.Models;
 using System.Collections;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Resources;
 using System.Text;
@@ -215,6 +216,24 @@ var mixedChannels = new List<InspectionChannelData> { primaryTemperature, probeT
 ChannelCorrectionService.Apply(mixedChannels, "1:0.2", "1:-0.5");
 Assert(primaryTemperature.Value == 20.2 && probeTemperature.Value == 0 && humidityChannel.Value == 49.5,
     "corrections exclude humidity-probe companion temperature");
+var liveCorrectionChannel = new InspectionChannelData
+{
+    Channel = 1, Type = ChannelType.Temperature, Role = ChannelRole.PrimaryTemperature, Value = 20, IsValid = true
+};
+ChannelCorrectionService.ApplyForMeasurement(
+    new List<InspectionChannelData> { liveCorrectionChannel }, false,
+    "1:0.3", string.Empty, "1:0.2", string.Empty);
+Assert(Math.Abs(liveCorrectionChannel.Value - 20.3) < 0.000001,
+    "realtime measurement uses the latest system correction");
+var formalCorrectionChannel = new InspectionChannelData
+{
+    Channel = 1, Type = ChannelType.Temperature, Role = ChannelRole.PrimaryTemperature, Value = 20, IsValid = true
+};
+ChannelCorrectionService.ApplyForMeasurement(
+    new List<InspectionChannelData> { formalCorrectionChannel }, true,
+    "1:0.3", string.Empty, "1:0.2", string.Empty);
+Assert(Math.Abs(formalCorrectionChannel.Value - 20.2) < 0.000001,
+    "formal calibration keeps the frozen task correction");
 List<InspectionChannelData> requiredChannels = MeasurementChannelSelectionService.SelectRequired(mixedChannels, 1, 1);
 Assert(requiredChannels.Count == 2 && requiredChannels.Contains(primaryTemperature) && requiredChannels.Contains(humidityChannel),
     "matrix channels exclude humidity-probe companion temperature");
@@ -396,13 +415,25 @@ foreach (string expectedFile in new[] { "作业摘要.csv", "任务信息.csv", 
     byte[] prefix = File.ReadAllBytes(expectedPath).Take(3).ToArray();
     Assert(prefix.SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "storage file UTF-8 BOM: " + expectedFile);
 }
+string summaryCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "作业摘要.csv"));
+Assert(summaryCsv.Contains("\"数据格式版本\",\"任务编号\",\"校准日期\",\"开始时间\",\"结束时间\"") &&
+       System.Text.RegularExpressions.Regex.IsMatch(
+           summaryCsv,
+           "\"1\\.3\",\"JOB-[^\"]+\",\"\\d{4}-\\d{2}-\\d{2}\\t\",\"\\d{2}:\\d{2}:\\d{2}\\t\",\"\\d{2}:\\d{2}:\\d{2}\\t\""),
+    "job summary keeps readable date and clock-time text without spreadsheet hash overflow");
 Assert(!Directory.Exists(Path.Combine(storageJobDirectory, "内部追溯数据")) &&
        !File.Exists(Path.Combine(storageJobDirectory, "正式采样原始通道.csv")) &&
        !File.Exists(Path.Combine(storageJobDirectory, "不确定度分量.csv")),
     "formal job keeps only operator-facing CSV files and does not create an internal trace folder");
 string sampleCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "正式采样.csv"));
-Assert(sampleCsv.Contains("\"温度1(℃)\"") && sampleCsv.Contains("\"19\"") && sampleCsv.Contains("\"22\""),
-    "wide sample CSV contains dynamic channel matrix");
+Assert(sampleCsv.Contains("\"温度1(℃)\"") && sampleCsv.Contains("\"19.000\"") && sampleCsv.Contains("\"22.000\""),
+    "wide sample CSV contains a fixed three-decimal dynamic channel matrix");
+Assert(sampleCsv.Contains("\"样本序号\",\"采样日期\",\"采样时间\"") &&
+       System.Text.RegularExpressions.Regex.IsMatch(
+           sampleCsv,
+           "\"\\d{4}-\\d{2}-\\d{2}\\t\",\"\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\t\"") &&
+       sampleCsv.Contains("\"20.000\""),
+    "formal sample CSV keeps spreadsheet-safe date and HH:mm:ss.fff text plus fixed three-decimal DUT readings");
 string resultCsv = File.ReadAllText(Path.Combine(storageJobDirectory, "校准结果.csv"));
 Assert(resultCsv.Contains("\"3.000\"") && resultCsv.Contains("\"-2.000\"") &&
        resultCsv.Contains("\"4.000\"") && resultCsv.Contains("\"0.500\""),
@@ -412,7 +443,8 @@ Assert(taskCsv.Contains("\"测温仪器级别\"") && taskCsv.Contains("\"热电�
        taskCsv.Contains("\"实验室名称\"") && taskCsv.Contains("\"测试校准实验室\""),
     "task snapshot CSV preserves laboratory identity and JJF1376 standard capability fields for traceability");
 IReadOnlyList<CalibrationArchiveSummary> storageHistory = testStorage.LoadHistory("测试设备", "JJF 1101-2019", "已完成");
-Assert(storageHistory.Count == 1 && storageHistory[0].SampleProgress == "2/2" && storageHistory[0].Device == "测试设备,一号",
+Assert(storageHistory.Count == 1 && storageHistory[0].SampleProgress == "2/2" && storageHistory[0].Device == "测试设备,一号" &&
+       storageHistory[0].StartedAt.Date == DateTime.Today,
     "history scans quoted CSV summaries without a database");
 Assert(CalibrationExcelReportService.Default.TryGenerate(storageJobDirectory, out string generatedExcelPath, out string generatedExcelError),
     "Excel report generation: " + generatedExcelError);
@@ -551,7 +583,7 @@ Directory.CreateDirectory(legacyJobDirectory);
 foreach (string sourceFile in Directory.GetFiles(storageJobDirectory, "*.csv"))
     File.Copy(sourceFile, Path.Combine(legacyJobDirectory, Path.GetFileName(sourceFile)), overwrite: true);
 string legacySummaryPath = Path.Combine(legacyJobDirectory, "作业摘要.csv");
-string legacySummary = File.ReadAllText(legacySummaryPath).Replace("\"1.2\"", "\"1.0\"", StringComparison.Ordinal);
+string legacySummary = File.ReadAllText(legacySummaryPath).Replace("\"1.3\"", "\"1.0\"", StringComparison.Ordinal);
 File.WriteAllText(legacySummaryPath, legacySummary, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 Assert(CalibrationExcelReportService.Default.TryGenerate(legacyJobDirectory, out string legacyExcelPath, out string legacyExcelError),
     "legacy Excel compatibility: " + legacyExcelError);
@@ -652,6 +684,31 @@ Assert(lifecycleService.Start(1, 200, "温度"), "acquisition can restart after 
 await restartedData.Task.WaitAsync(TimeSpan.FromSeconds(2));
 await lifecycleService.StopAsync();
 
+// 动态节拍回归：正式采样开始时把 10 s 实时轮询缩短为 200 ms，旧等待必须被立即唤醒，不能仍等满 10 s。
+ImmediateMeasurementReader intervalReader = new();
+InspectionDataAcquisitionService intervalService = new(intervalReader);
+int intervalResponseCount = 0;
+TaskCompletionSource<bool> firstIntervalResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
+TaskCompletionSource<bool> secondIntervalResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
+intervalService.DataAcquired += (_, _) =>
+{
+    int count = Interlocked.Increment(ref intervalResponseCount);
+    if (count == 1) firstIntervalResponse.TrySetResult(true);
+    if (count == 2) secondIntervalResponse.TrySetResult(true);
+};
+Assert(intervalService.Start(1, 10000, "温度"), "long-interval acquisition starts");
+await firstIntervalResponse.Task.WaitAsync(TimeSpan.FromSeconds(2));
+Stopwatch intervalAdjustmentWatch = Stopwatch.StartNew();
+Assert(intervalService.TryUpdateInterval(200) && intervalService.CurrentIntervalMilliseconds == 200,
+    "running acquisition accepts the shorter formal-sampling interval");
+await secondIntervalResponse.Task.WaitAsync(TimeSpan.FromSeconds(2));
+intervalAdjustmentWatch.Stop();
+Assert(intervalAdjustmentWatch.Elapsed < TimeSpan.FromSeconds(2) && intervalService.LastReadDurationMilliseconds > 0,
+    "shortening the interval wakes the old 10-second wait and records complete-read duration");
+Assert(intervalService.TryUpdateInterval(10000) && intervalService.CurrentIntervalMilliseconds == 10000,
+    "original realtime interval can be restored after formal sampling");
+await intervalService.StopAsync();
+
 // 通信退避回归：连续错误按 1 s、2 s、3 s 递增，并在第三次后自动停止，不能无限轰击设备。
 AlwaysFailMeasurementReader failingReader = new();
 InspectionDataAcquisitionService retryService = new(failingReader);
@@ -732,6 +789,18 @@ sealed class BlockingMeasurementReader : IInspectionMeasurementReader
         ReadEntered.Set();
         if (!AllowReadToReturn.Wait(TimeSpan.FromSeconds(5)))
             throw new TimeoutException("自动检查未释放模拟设备读操作。");
+        return new List<InspectionChannelData>
+        {
+            new() { Channel = 1, Type = ChannelType.Temperature, Value = 20, IsValid = true }
+        };
+    }
+}
+
+/// <summary>用于验证运行中动态调整轮询周期的立即成功读取器。</summary>
+sealed class ImmediateMeasurementReader : IInspectionMeasurementReader
+{
+    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    {
         return new List<InspectionChannelData>
         {
             new() { Channel = 1, Type = ChannelType.Temperature, Value = 20, IsValid = true }

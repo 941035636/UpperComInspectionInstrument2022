@@ -105,7 +105,10 @@ namespace UpperComInspectionInstrument2022.Services
                         if (values.Length < requiredLength) Array.Resize(ref values, requiredLength);
                         if (!string.Equals(values[statusIndex], "采样中", StringComparison.Ordinal)) continue;
 
-                        values[finishedAtIndex] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+                        // 1.3 起摘要把日期与时间分列，旧格式仍保留完整日期时间写法。
+                        values[finishedAtIndex] = Array.IndexOf(header, "校准日期") >= 0
+                            ? FormatSummaryTime(DateTime.Now)
+                            : DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
                         values[statusIndex] = "已中断";
                         values[messageIndex] = "检测到程序上次未正常结束，启动时已自动标记为中断；已保存样本继续保留。";
                         rows[1] = values;
@@ -317,10 +320,10 @@ namespace UpperComInspectionInstrument2022.Services
             return records.OrderByDescending(item => item.StartedAt).ToList();
         }
 
-        /// <summary>把“作业摘要.csv”的表头字典转换为历史列表行模型。</summary>
+        /// <summary>把“作业摘要.csv”的表头字典转换为历史列表行模型。</summary> 
         private static CalibrationArchiveSummary CreateArchiveSummary(IReadOnlyDictionary<string, string> values, string directory)
         {
-            DateTime.TryParse(GetValue(values, "开始时间"), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime startedAt);
+            DateTime startedAt = ParseSummaryStartTime(values);
             string sampleCount = GetValue(values, "已存样本数");
             string plannedCount = GetValue(values, "计划样本数");
             return new CalibrationArchiveSummary
@@ -340,6 +343,9 @@ namespace UpperComInspectionInstrument2022.Services
                 DirectoryPath = directory,
                 SampleFilePath = Path.Combine(directory, SampleFileName),
                 ResultFilePath = Path.Combine(directory, ResultFileName)
+
+
+               
             };
         }
 
@@ -349,13 +355,14 @@ namespace UpperComInspectionInstrument2022.Services
             if (_currentJobDirectory == null) throw new InvalidOperationException("本地作业目录尚未建立。");
             WriteCsvAtomic(Path.Combine(_currentJobDirectory, SummaryFileName), new[]
             {
-                new[] { "数据格式版本", "任务编号", "开始时间", "结束时间", "校准规范", "校准类型", "委托单位", "被校设备", "型号规格", "设备编号", "标准器证书编号", "设定温度(℃)", "设定湿度(%RH)", "温度测点数", "湿度测点数", "计划样本数", "已存样本数", "状态", "状态说明", "作业目录" },
+                new[] { "数据格式版本", "任务编号", "校准日期", "开始时间", "结束时间", "校准规范", "校准类型", "委托单位", "被校设备", "型号规格", "设备编号", "标准器证书编号", "设定温度(℃)", "设定湿度(%RH)", "温度测点数", "湿度测点数", "计划样本数", "已存样本数", "状态", "状态说明", "作业目录" },
                 new[]
                 {
-                    "1.2",
+                    "1.3",
                     _currentJobId,
-                    FormatDateTime(_startedAt),
-                    FormatDateTime(_finishedAt),
+                    FormatSummaryDate(_startedAt),
+                    FormatSummaryTime(_startedAt),
+                    FormatSummaryTime(_finishedAt),
                     GetStandardName(),
                     GetCalibrationTypeName(),
                     CalibrationTaskContext.CustomerName,
@@ -446,10 +453,10 @@ namespace UpperComInspectionInstrument2022.Services
             };
         }
 
-        /// <summary>根据当前温湿度测点数动态生成正式采样矩阵表头。</summary>
+        /// <summary>根据当前温湿度测点数动态生成正式采样矩阵表头，日期与时分秒分列便于办公软件直接查看。</summary>
         private static string[] BuildSampleHeader()
         {
-            List<string> header = new() { "样本序号", "采样时间", "有效通道数", "异常通道数", "异常通道", "被校设备温度示值(℃)", "被校设备湿度示值(%RH)" };
+            List<string> header = new() { "样本序号", "采样日期", "采样时间", "有效通道数", "异常通道数", "异常通道", "被校设备温度示值(℃)", "被校设备湿度示值(%RH)" };
             header.AddRange(Enumerable.Range(1, CalibrationTaskContext.TemperaturePointCount).Select(index => $"温度{index}(℃)"));
             header.AddRange(Enumerable.Range(1, CalibrationTaskContext.HumidityPointCount).Select(index => $"湿度{index}(%RH)"));
             return header.ToArray();
@@ -475,17 +482,18 @@ namespace UpperComInspectionInstrument2022.Services
             List<string> row = new()
             {
                 record.SampleNumber.ToString(CultureInfo.InvariantCulture),
-                record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                FormatSpreadsheetText(record.Timestamp, "yyyy-MM-dd"),
+                FormatSpreadsheetText(record.Timestamp, "HH:mm:ss.fff"),
                 (CalibrationTaskContext.TemperaturePointCount + CalibrationTaskContext.HumidityPointCount - invalid.Count).ToString(CultureInfo.InvariantCulture),
                 invalid.Count.ToString(CultureInfo.InvariantCulture),
                 string.Join(";", invalid),
-                FormatNumber(record.DutDisplayTemperature),
-                FormatNumber(record.DutDisplayHumidity)
+                FormatSampleNumber(record.DutDisplayTemperature),
+                FormatSampleNumber(record.DutDisplayHumidity)
             };
             for (int index = 1; index <= CalibrationTaskContext.TemperaturePointCount; index++)
-                row.Add(channels.TryGetValue((ChannelRole.PrimaryTemperature, index), out InspectionChannelData? item) && item.IsValid ? FormatNumber(item.Value) : string.Empty);
+                row.Add(channels.TryGetValue((ChannelRole.PrimaryTemperature, index), out InspectionChannelData? item) && item.IsValid ? FormatSampleNumber(item.Value) : string.Empty);
             for (int index = 1; index <= CalibrationTaskContext.HumidityPointCount; index++)
-                row.Add(channels.TryGetValue((ChannelRole.Humidity, index), out InspectionChannelData? item) && item.IsValid ? FormatNumber(item.Value) : string.Empty);
+                row.Add(channels.TryGetValue((ChannelRole.Humidity, index), out InspectionChannelData? item) && item.IsValid ? FormatSampleNumber(item.Value) : string.Empty);
             return row.ToArray();
         }
 
@@ -621,19 +629,49 @@ namespace UpperComInspectionInstrument2022.Services
             return safe.Length <= 40 ? safe : safe[..40];
         }
 
-        /// <summary>安全读取字典字段；字段缺失时返回空字符串。</summary>
+        /// <summary>安全读取字典字段；字段缺失时返回空字符串。</summary> 
         private static string GetValue(IReadOnlyDictionary<string, string> values, string key) =>
             values.TryGetValue(key, out string? value) ? value : string.Empty;
         /// <summary>取得当前任务使用的规范代号。</summary>
         private static string GetStandardName() => CalibrationTaskContext.StandardIndex == 1 ? "JJF 1376-2012" : "JJF 1101-2019";
         /// <summary>取得适合归档和历史列表显示的校准类型名称。</summary>
         private static string GetCalibrationTypeName() => CalibrationTaskContext.StandardIndex == 1 ? "箱式电阻炉温度" : CalibrationTaskContext.IncludesHumidity ? "温湿度" : "温度";
-        /// <summary>把可空时间格式化为不受区域设置影响的文本。</summary>
-        private static string FormatDateTime(DateTime? value) => value?.ToString("yyyy-MM-dd HH:mm:ss.fff") ?? string.Empty;
+        /// <summary>从 1.3 的“校准日期 + 开始时间”或 1.0～1.2 的完整开始时间恢复历史排序时间。</summary>
+        private static DateTime ParseSummaryStartTime(IReadOnlyDictionary<string, string> values)
+        {
+            // 新格式末尾带不可见制表符，防止 Excel/WPS 把 CSV 日期转为窄列中的 #####；解析时清理该标记。
+            string date = GetValue(values, "校准日期").Trim();
+            string time = GetValue(values, "开始时间").Trim();
+            if (!string.IsNullOrWhiteSpace(date) &&
+                DateTime.TryParseExact(
+                    $"{date} {time}",
+                    new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.fff" },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out DateTime separated))
+                return separated;
+
+            return DateTime.TryParse(time, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime legacy)
+                ? legacy
+                : default;
+        }
+
+        /// <summary>摘要中的校准日期单独保存为办公软件友好的文本，避免默认列宽下显示为井号。</summary>
+        private static string FormatSummaryDate(DateTime? value) => value.HasValue ? FormatSpreadsheetText(value.Value, "yyyy-MM-dd") : string.Empty;
+        /// <summary>摘要起止时间保存为办公软件友好的文本并显示到秒；逐组正式采样文件仍保留毫秒。</summary>
+        private static string FormatSummaryTime(DateTime? value) => value.HasValue ? FormatSpreadsheetText(value.Value, "HH:mm:ss") : string.Empty;
+        /// <summary>
+        /// 日期时间字段末尾附加不可见制表符，使 Excel/WPS 直接打开 CSV 时按文本显示而不是自动转为日期数值。
+        /// CSV 无法保存列宽；该标记可避免列宽不足时出现 #####，程序读取时会 Trim 清理。
+        /// </summary>
+        private static string FormatSpreadsheetText(DateTime value, string format) =>
+            value.ToString(format, CultureInfo.InvariantCulture) + "\t";
         /// <summary>把可空有限数格式化为 CSV 数值文本。</summary>
         private static string FormatNumber(double? value) => value.HasValue && double.IsFinite(value.Value) ? value.Value.ToString("0.############", CultureInfo.InvariantCulture) : string.Empty;
         /// <summary>把有限数格式化为 CSV 数值文本，非有限数输出空白。</summary>
         private static string FormatNumber(double value) => double.IsFinite(value) ? value.ToString("0.############", CultureInfo.InvariantCulture) : string.Empty;
+        /// <summary>正式采样中的标准器读数和被校设备示值固定保留三位小数，消除浮点转换尾差。</summary>
+        private static string FormatSampleNumber(double? value) => value.HasValue && double.IsFinite(value.Value) ? value.Value.ToString("0.000", CultureInfo.InvariantCulture) : string.Empty;
         /// <summary>最终校准结果固定保留三位小数；原始读数和中间分量仍使用完整可追溯精度。</summary>
         private static string FormatResultNumber(double value) => double.IsFinite(value) ? value.ToString("0.000", CultureInfo.InvariantCulture) : string.Empty;
         /// <summary>创建任务快照中的“字段—值”行。</summary>
@@ -642,7 +680,7 @@ namespace UpperComInspectionInstrument2022.Services
         private static string[] ResultRow(string name, double value, string unit, string note) => new[] { name, FormatResultNumber(value), unit, note };
     }
 
-    /// <summary>
+    /// <summary> 
     /// 历史记录页面使用的轻量作业摘要，只包含列表展示和打开文件所需信息。
     /// </summary>
     public sealed class CalibrationArchiveSummary

@@ -93,7 +93,7 @@ namespace UpperComInspectionInstrument2022.Models
 
 
         /// <summary>
-        /// 第一个寄存器原始值
+        /// 第一个寄存器原始值 
         /// </summary>
         public ushort Register1 { get; set; }
 

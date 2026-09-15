@@ -34,6 +34,7 @@ namespace UpperComInspectionInstrument2022.Views
         private int _calibrationSampleCount;
         private DateTime? _setPointReachedAt;
         private DateTime _nextCalibrationSampleAt;
+        private int? _realtimeIntervalBeforeFormalCalibration;
         private DataTable _measurementTable = new DataTable();
         private string _appliedTaskSignature = string.Empty;
         private readonly List<TrendSample> _visibleTrendSamples = new List<TrendSample>();
@@ -47,6 +48,9 @@ namespace UpperComInspectionInstrument2022.Views
         };
         private Rect _chartPlotArea = Rect.Empty;
         private Line? _chartCursorLine;
+
+        /// <summary>当前是否正在执行正式校准采样；系统设置据此决定是否允许刷新任务快照。</summary>
+        public bool IsFormalCalibrationRunning => _calibrationRunning;
 
         /// <summary>
         /// 初始化工作台，订阅共享采集服务事件，并建立点数联动、串口列表和任务状态。
@@ -158,6 +162,28 @@ namespace UpperComInspectionInstrument2022.Views
             _appliedTaskSignature = newSignature;
             SaveRealtimeRecordCheckBox.IsEnabled = true;
             UpdateRealtimeRecordStatus();
+        }
+
+        /// <summary>
+        /// 系统设置保存后使普通实时测量立即改用最新修正值，并撤销旧数据下的稳定确认。
+        /// 正式校准运行中只保存系统设置，不改变已经冻结的本轮校准依据。
+        /// </summary>
+        public void NotifySystemSettingsSaved()
+        {
+            if (_calibrationRunning)
+            {
+                StatusTextBlock.Text = "系统设置已保存；当前正式校准继续使用启动时冻结的修正值";
+                return;
+            }
+
+            _trendLooksStable = false;
+            _setPointReachedAt = null;
+            SetPointReachedCheckBox.IsChecked = false;
+            ConfirmStableCheckBox.IsChecked = false;
+            StabilityTextBlock.Text = "修正值已更新，等待新数据重新判断稳定性";
+            StabilityTextBlock.Foreground = Brushes.DarkOrange;
+            StatusTextBlock.Text = "通道修正已更新，将从下一组实时数据生效";
+            EvaluateFormalReadiness();
         }
 
         /// <summary>生成影响工作台矩阵和采集解析的任务签名，用于判断是否必须清空旧实时数据。</summary>
@@ -679,6 +705,23 @@ namespace UpperComInspectionInstrument2022.Views
         /// </summary>
         private void StartCalibrationButton_Click(object sender, RoutedEventArgs e)
         {
+            // 正式采样开始前再冻结一次当前系统资料，保证屏幕、原始记录和报告采用同一组修正值。
+            if (!CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
+                    CalibrationTaskContext.StandardIndex,
+                    CalibrationTaskContext.IncludesHumidity,
+                    out string standardSettingsError))
+            {
+                MessageBox.Show(
+                    $"{standardSettingsError}\n\n请先在系统设置中完善标准器资料。",
+                    "标准器资料无法冻结",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+            // 任务可能提前配置；以正式采样实际启动日覆盖配置日，供原始记录和证书使用。
+            CalibrationTaskContext.CalibrationDate = DateTime.Today;
+            CalibrationTaskContext.Save();
+
             if (!EvaluateFormalReadiness())
             {
                 MessageBox.Show(FormalReadinessTextBlock.Text, "暂不能启动正式校准", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -690,9 +733,16 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.DutDisplayHumidity = dutHumidity;
             CalibrationTaskContext.Save();
 
+            if (!TryAlignRealtimeIntervalForFormalCalibration(out string intervalError))
+            {
+                MessageBox.Show(intervalError, "正式采样间隔无法执行", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             CalibrationRunContext.Begin();
             if (!CalibrationFileStorageService.Default.TryBeginJob(out string storageError))
             {
+                RestoreRealtimeIntervalAfterFormalCalibration();
                 CalibrationRunContext.Clear();
                 MessageBox.Show(storageError, "无法建立本地作业", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
@@ -705,7 +755,10 @@ namespace UpperComInspectionInstrument2022.Views
             StartCalibrationButton.IsEnabled = false;
             ViewResultButton.IsEnabled = false;
             FormalSampleProgressTextBlock.Text = $"正式样本 0 / {CalibrationTaskContext.PlannedCount}";
-            StatusTextBlock.Text = $"正式校准已启动；实时测量保持运行，按 {CalibrationTaskContext.SamplingIntervalSeconds} s 间隔留存样本";
+            string intervalStatus = _realtimeIntervalBeforeFormalCalibration.HasValue
+                ? $"设备轮询已由 {_realtimeIntervalBeforeFormalCalibration.Value} ms 自动调整为 {_acquisitionService.CurrentIntervalMilliseconds} ms"
+                : $"设备轮询 {_acquisitionService.CurrentIntervalMilliseconds} ms";
+            StatusTextBlock.Text = $"正式校准已启动；按 {CalibrationTaskContext.SamplingIntervalSeconds} s 间隔留存样本；{intervalStatus}";
             PublishGlobalRunStatus($"{_modbusClient.PortName} · 正式采样 0/{CalibrationTaskContext.PlannedCount}", GlobalRunStatusTone.Active);
             UpdateParameterVisibility();
             WriteOperation(
@@ -719,6 +772,81 @@ namespace UpperComInspectionInstrument2022.Views
                 "启动正式采样",
                 $"计划 {CalibrationTaskContext.PlannedCount} 组",
                 CalibrationFileStorageService.Default.CurrentJobDirectory ?? string.Empty);
+        }
+
+        /// <summary>
+        /// 正式采样开始时校验设备完整读取耗时，并在实时轮询慢于正式间隔时动态加快轮询。
+        /// 串口和采集循环保持运行，避免实时观察到正式校准之间出现断流。
+        /// </summary>
+        private bool TryAlignRealtimeIntervalForFormalCalibration(out string error)
+        {
+            long requestedMilliseconds = (long)Math.Max(1, CalibrationTaskContext.SamplingIntervalSeconds) * 1000L;
+            if (requestedMilliseconds > int.MaxValue)
+            {
+                error = "正式采样间隔超出系统可执行范围，请返回任务配置重新设置。";
+                return false;
+            }
+
+            int formalIntervalMilliseconds = (int)requestedMilliseconds;
+            int lastReadDurationMilliseconds = _acquisitionService.LastReadDurationMilliseconds;
+            if (lastReadDurationMilliseconds >= formalIntervalMilliseconds)
+            {
+                error = $"巡检仪最近一次完整读取耗时约 {lastReadDurationMilliseconds} ms，已经达到或超过正式采样间隔 {formalIntervalMilliseconds} ms，无法保证每组都是新的完整数据。请增大正式采样间隔。";
+                return false;
+            }
+
+            int currentIntervalMilliseconds = _acquisitionService.CurrentIntervalMilliseconds;
+            _realtimeIntervalBeforeFormalCalibration = null;
+            if (currentIntervalMilliseconds <= formalIntervalMilliseconds)
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            if (!_acquisitionService.TryUpdateInterval(formalIntervalMilliseconds))
+            {
+                error = "实时采集循环当前不可调整，请确认实时测量仍在运行后重试。";
+                return false;
+            }
+
+            _realtimeIntervalBeforeFormalCalibration = currentIntervalMilliseconds;
+            IntervalTextBox.Text = formalIntervalMilliseconds.ToString();
+            WriteRuntime(
+                "信息",
+                "校准",
+                "正式采样自动调整设备轮询周期",
+                $"{currentIntervalMilliseconds} ms → {formalIntervalMilliseconds} ms",
+                _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>正式校准完成、中断或失败后恢复操作人员启动实时测量时使用的轮询周期。</summary>
+        private void RestoreRealtimeIntervalAfterFormalCalibration()
+        {
+            if (!_realtimeIntervalBeforeFormalCalibration.HasValue) return;
+            int originalIntervalMilliseconds = _realtimeIntervalBeforeFormalCalibration.Value;
+            _realtimeIntervalBeforeFormalCalibration = null;
+            if (_acquisitionService.IsRunning)
+                _acquisitionService.TryUpdateInterval(originalIntervalMilliseconds);
+            IntervalTextBox.Text = originalIntervalMilliseconds.ToString();
+            WriteRuntime(
+                "信息",
+                "校准",
+                "正式采样结束并恢复实时轮询周期",
+                $"恢复为 {originalIntervalMilliseconds} ms",
+                _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
+        }
+
+        /// <summary>从上一个计划采样时刻递增到下一时刻，避免以实际处理完成时间为基准造成累计漂移。</summary>
+        private void AdvanceNextCalibrationSampleAt(DateTime currentSnapshotTime, int intervalSeconds)
+        {
+            TimeSpan interval = TimeSpan.FromSeconds(Math.Max(1, intervalSeconds));
+            do
+            {
+                _nextCalibrationSampleAt = _nextCalibrationSampleAt.Add(interval);
+            }
+            while (_nextCalibrationSampleAt <= currentSnapshotTime);
         }
 
         /// <summary>读取本次正式样本要配对的被校设备温湿度示值，并保存到任务上下文。</summary>
@@ -764,6 +892,7 @@ namespace UpperComInspectionInstrument2022.Views
                 CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
             _realtimeStorageService.TryEndSession("已停止", "操作人员停止实时测量", out realtimeStorageWarning);
             _calibrationRunning = false;
+            RestoreRealtimeIntervalAfterFormalCalibration();
             try
             {
                 await _acquisitionService.StopAsync();
@@ -831,6 +960,7 @@ namespace UpperComInspectionInstrument2022.Views
             MeasurementChartCanvas.Children.Clear();
             CalibrationRunContext.Clear();
             _calibrationRunning = false;
+            RestoreRealtimeIntervalAfterFormalCalibration();
             _calibrationSampleCount = 0;
             _requiredChannelsValid = false;
             if (resetDeviceState) _deviceResponding = false;
@@ -863,13 +993,13 @@ namespace UpperComInspectionInstrument2022.Views
             }
             Dispatcher.Invoke(() =>
             {
-                if (CalibrationTaskContext.IsConfigured)
-                {
-                    // 修正值必须先于矩阵、稳定性和正式样本计算应用，同时 RawValue 仍保留修正前值。
-                    ChannelCorrectionService.Apply(data,
-                        CalibrationTaskContext.ReferencedTemperatureCorrections,
-                        CalibrationTaskContext.ReferencedHumidityCorrections);
-                }
+                // 普通实时测量跟随最新系统设置；正式采样锁定任务快照，且 RawValue 始终保留修正前值。
+                ChannelCorrectionService.ApplyForMeasurement(data,
+                    _calibrationRunning,
+                    SystemSettingsContext.TemperatureChannelCorrections,
+                    SystemSettingsContext.HumidityChannelCorrections,
+                    CalibrationTaskContext.ReferencedTemperatureCorrections,
+                    CalibrationTaskContext.ReferencedHumidityCorrections);
                 int temperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0;
                 int humidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0;
                 List<InspectionChannelData> requiredChannels = MeasurementChannelSelectionService.SelectRequired(
@@ -908,7 +1038,7 @@ namespace UpperComInspectionInstrument2022.Views
                 }
 
                 // 实时快照每轮都刷新；只有到达正式采样时刻才进入以下留存流程。
-                if (_calibrationRunning && DateTime.Now >= _nextCalibrationSampleAt)
+                if (_calibrationRunning && snapshot.Timestamp >= _nextCalibrationSampleAt)
                 {
                     if (!double.TryParse(DutDisplayTemperatureTextBox.Text.Trim(), out double dutTemperatureValue) || !double.IsFinite(dutTemperatureValue))
                     {
@@ -930,6 +1060,7 @@ namespace UpperComInspectionInstrument2022.Views
                     if (!CalibrationFileStorageService.Default.TryAppendSample(formalRecord, out string storageError))
                     {
                         _calibrationRunning = false;
+                        RestoreRealtimeIntervalAfterFormalCalibration();
                         CalibrationTaskContext.HasCompletedCalibration = false;
                         StartCalibrationButton.Content = "正式采样保存失败";
                         StartCalibrationButton.IsEnabled = false;
@@ -945,7 +1076,7 @@ namespace UpperComInspectionInstrument2022.Views
                     int intervalSeconds = CalibrationTaskContext.IsConfigured
                         ? CalibrationTaskContext.SamplingIntervalSeconds
                         : int.TryParse(CalibrationIntervalTextBox.Text.Trim(), out int interval) ? interval : 60;
-                    _nextCalibrationSampleAt = DateTime.Now.AddSeconds(Math.Max(1, intervalSeconds));
+                    AdvanceNextCalibrationSampleAt(snapshot.Timestamp, intervalSeconds);
                     if (TryGetPlannedCount(out int plannedCount) && plannedCount > 0)
                     {
                         FormalSampleProgressTextBlock.Text = $"正式样本 {_calibrationSampleCount} / {plannedCount}";
@@ -955,6 +1086,7 @@ namespace UpperComInspectionInstrument2022.Views
                         {
                             // 计划样本完成后执行“计算→结果落盘→任务完成标记”，任何一步失败都不宣称完成。
                             _calibrationRunning = false;
+                            RestoreRealtimeIntervalAfterFormalCalibration();
                             CalibrationResultSummary result = CalibrationResultCalculator.Calculate();
                             string completionError = result.Message;
                             if (!result.IsValid)
@@ -1641,6 +1773,7 @@ namespace UpperComInspectionInstrument2022.Views
 
             if (_calibrationRunning)
                 CalibrationFileStorageService.Default.TryMarkInterrupted($"巡检仪连续 {failureCount} 次采集异常导致正式校准中断：{ex.Message}", out _);
+            _calibrationRunning = false;
             _realtimeStorageService.TryEndSession("采集异常", $"连续 {failureCount} 次读取失败：{ex.Message}", out _);
             _deviceResponding = false;
             _requiredChannelsValid = false;
@@ -1652,6 +1785,7 @@ namespace UpperComInspectionInstrument2022.Views
             WriteRuntime("错误", "通信", "巡检仪连续失败，停止请求", $"连续 {failureCount} 次；{ex.Message}", _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
             Dispatcher.Invoke(() =>
             {
+                RestoreRealtimeIntervalAfterFormalCalibration();
                 ConnectDeviceButton.IsEnabled = true;
                 StartAcquisitionButton.IsEnabled = false;
                 StopAcquisitionButton.IsEnabled = false;

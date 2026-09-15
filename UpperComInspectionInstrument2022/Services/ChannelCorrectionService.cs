@@ -42,6 +42,24 @@ namespace UpperComInspectionInstrument2022.Services
         }
 
         /// <summary>
+        /// 按当前测量阶段选择修正值并应用：普通实时测量使用系统设置中的最新值，
+        /// 正式校准采样使用启动时冻结到任务中的值，防止同一轮正式样本中途改变计量依据。
+        /// </summary>
+        public static void ApplyForMeasurement(
+            List<InspectionChannelData> channels,
+            bool formalCalibrationRunning,
+            string currentTemperatureText,
+            string currentHumidityText,
+            string frozenTemperatureText,
+            string frozenHumidityText)
+        {
+            Apply(
+                channels,
+                formalCalibrationRunning ? frozenTemperatureText : currentTemperatureText,
+                formalCalibrationRunning ? frozenHumidityText : currentHumidityText);
+        }
+
+        /// <summary>
         /// 保存每个通道的原始值，并把对应证书修正值叠加到有效测量值上。
         /// </summary>
         public static void Apply(List<InspectionChannelData> channels, string temperatureText, string humidityText)

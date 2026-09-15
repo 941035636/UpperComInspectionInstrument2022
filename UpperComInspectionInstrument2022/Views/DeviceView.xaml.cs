@@ -96,8 +96,39 @@ namespace UpperComInspectionInstrument2022.Views
             SystemSettingsContext.HumidityUncertainty = humidityUncertainty;
             SystemSettingsContext.HumidityCoverage = humidityCoverage;
             SystemSettingsContext.Save();
-            StatusTextBlock.Text = "系统资料已保存，新建或重新保存任务时会引用最新快照。";
-            StatusTextBlock.Foreground = System.Windows.Media.Brushes.DarkGreen;
+
+            bool formalCalibrationRunning = Application.Current.MainWindow is MainWindow mainWindow &&
+                                            mainWindow.IsFormalCalibrationRunning;
+            bool currentTaskUpdated = false;
+            string taskSyncWarning = string.Empty;
+            if (CalibrationTaskContext.IsConfigured &&
+                CalibrationTaskContext.StandardIndex == _standardIndex &&
+                !CalibrationTaskContext.HasCompletedCalibration &&
+                !formalCalibrationRunning)
+            {
+                if (CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
+                        _standardIndex,
+                        CalibrationTaskContext.IncludesHumidity,
+                        out taskSyncWarning))
+                {
+                    CalibrationTaskContext.Save();
+                    currentTaskUpdated = true;
+                }
+            }
+
+            if (Application.Current.MainWindow is MainWindow owner)
+                owner.NotifySystemSettingsSaved();
+
+            StatusTextBlock.Text = formalCalibrationRunning
+                ? "系统资料已保存；当前正式校准仍使用启动时冻结的修正值，新值用于后续实时测量和任务。"
+                : currentTaskUpdated
+                    ? "系统资料已保存并同步当前任务；通道修正从下一组实时数据生效。"
+                    : string.IsNullOrWhiteSpace(taskSyncWarning)
+                        ? "系统资料已保存；通道修正从下一组实时数据生效。"
+                        : $"系统资料已保存；当前任务未同步：{taskSyncWarning}";
+            StatusTextBlock.Foreground = string.IsNullOrWhiteSpace(taskSyncWarning)
+                ? System.Windows.Media.Brushes.DarkGreen
+                : System.Windows.Media.Brushes.DarkOrange;
         }
 
         /// <summary>

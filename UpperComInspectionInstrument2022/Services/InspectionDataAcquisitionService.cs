@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using UpperComInspectionInstrument2022.Models;
@@ -15,11 +16,14 @@ namespace UpperComInspectionInstrument2022.Services
         private const int RetryMaximumDelayMilliseconds = 5000;
         private readonly IInspectionMeasurementReader _measurementReader;
         private readonly object _stateLock = new object();
+        private readonly SemaphoreSlim _intervalChangedSignal = new SemaphoreSlim(0, 1);
         private CancellationTokenSource? _cts;
         private Task? _loopTask;
         private long _acquisitionId;
         private string _calibrationType = "温度";
         private bool _isRunning;
+        private int _intervalMilliseconds = 2000;
+        private int _lastReadDurationMilliseconds;
         private int _consecutiveFailureCount;
         private int _nextRetryDelayMilliseconds;
 
@@ -30,6 +34,18 @@ namespace UpperComInspectionInstrument2022.Services
         public bool IsRunning
         {
             get { lock (_stateLock) return _isRunning; }
+        }
+
+        /// <summary>当前实时完整轮询的等待周期，正式校准可在不重开串口的情况下临时调整。</summary>
+        public int CurrentIntervalMilliseconds
+        {
+            get { lock (_stateLock) return _intervalMilliseconds; }
+        }
+
+        /// <summary>最近一次完整读取全部任务通道所用时间，用于拦截设备无法实现的正式采样间隔。</summary>
+        public int LastReadDurationMilliseconds
+        {
+            get { lock (_stateLock) return _lastReadDurationMilliseconds; }
         }
 
         /// <summary>当前连续通信失败次数；任意一次完整读取成功后自动清零。</summary>
@@ -72,12 +88,37 @@ namespace UpperComInspectionInstrument2022.Services
                 cts = new CancellationTokenSource();
                 _cts = cts;
                 _calibrationType = string.IsNullOrWhiteSpace(calibrationType) ? "温度" : calibrationType;
+                _intervalMilliseconds = intervalMilliseconds;
+                _lastReadDurationMilliseconds = 0;
                 _consecutiveFailureCount = 0;
                 _nextRetryDelayMilliseconds = 0;
+                while (_intervalChangedSignal.Wait(0)) { }
                 _isRunning = true;
                 _loopTask = Task.Run(
-                    () => AcquisitionLoop(slaveAddress, intervalMilliseconds, cts),
+                    () => AcquisitionLoop(slaveAddress, cts),
                     CancellationToken.None);
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 动态调整运行中的轮询周期。周期缩短时会唤醒当前等待，使正式校准无需停止采集或重开串口即可加快刷新。
+        /// </summary>
+        public bool TryUpdateInterval(int intervalMilliseconds)
+        {
+            if (intervalMilliseconds < 200) intervalMilliseconds = 200;
+            int previousInterval;
+            lock (_stateLock)
+            {
+                if (!_isRunning || _loopTask is not { IsCompleted: false }) return false;
+                previousInterval = _intervalMilliseconds;
+                _intervalMilliseconds = intervalMilliseconds;
+            }
+
+            if (intervalMilliseconds < previousInterval)
+            {
+                try { _intervalChangedSignal.Release(); }
+                catch (SemaphoreFullException) { }
             }
             return true;
         }
@@ -126,7 +167,7 @@ namespace UpperComInspectionInstrument2022.Services
         /// 循环读取完整测量数据、分配采集序号并发布事件。
         /// 通信失败采用 1～5 秒线性退避，防止设备无响应时持续高频请求。
         /// </summary>
-        private async Task AcquisitionLoop(byte slaveAddress, int intervalMilliseconds, CancellationTokenSource owner)
+        private async Task AcquisitionLoop(byte slaveAddress, CancellationTokenSource owner)
         {
             CancellationToken token = owner.Token;
             try
@@ -134,16 +175,21 @@ namespace UpperComInspectionInstrument2022.Services
                 while (!token.IsCancellationRequested)
                 {
                     long acquisitionId = Interlocked.Increment(ref _acquisitionId);
-                    int delayMilliseconds = intervalMilliseconds;
+                    int delayMilliseconds = CurrentIntervalMilliseconds;
+                    bool readSucceeded = false;
+                    long cycleStarted = Stopwatch.GetTimestamp();
                     try
                     {
                         List<InspectionChannelData> data = _measurementReader.ReadMeasurements(_calibrationType, slaveAddress, acquisitionId);
+                        int readDurationMilliseconds = Math.Max(1, (int)Math.Ceiling(Stopwatch.GetElapsedTime(cycleStarted).TotalMilliseconds));
                         lock (_stateLock)
                         {
+                            _lastReadDurationMilliseconds = readDurationMilliseconds;
                             _consecutiveFailureCount = 0;
                             _nextRetryDelayMilliseconds = 0;
                         }
                         if (!token.IsCancellationRequested) DataAcquired?.Invoke(acquisitionId, data);
+                        readSucceeded = true;
                     }
                     catch (Exception ex) when (!token.IsCancellationRequested)
                     {
@@ -152,7 +198,7 @@ namespace UpperComInspectionInstrument2022.Services
                         {
                             _consecutiveFailureCount++;
                             _nextRetryDelayMilliseconds = Math.Max(
-                                intervalMilliseconds,
+                                _intervalMilliseconds,
                                 Math.Min(RetryMaximumDelayMilliseconds, RetryBaseDelayMilliseconds * _consecutiveFailureCount));
                             delayMilliseconds = _nextRetryDelayMilliseconds;
                             reachedFailureLimit = _consecutiveFailureCount >= MaxConsecutiveFailures;
@@ -168,7 +214,10 @@ namespace UpperComInspectionInstrument2022.Services
                             if (reachedFailureLimit) owner.Cancel();
                         }
                     }
-                    await Task.Delay(delayMilliseconds, token).ConfigureAwait(false);
+                    if (readSucceeded)
+                        await WaitForNextCycleAsync(cycleStarted, token).ConfigureAwait(false);
+                    else
+                        await Task.Delay(delayMilliseconds, token).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -187,6 +236,35 @@ namespace UpperComInspectionInstrument2022.Services
                     }
                 }
                 owner.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// 等待下一轮读取；周期按相邻两轮完整读取的起始时刻计算，会扣除本轮读取和事件处理耗时。
+        /// 若运行期间把轮询周期调短，则唤醒旧等待并按新周期重新计算剩余时间。
+        /// 调长周期不会主动唤醒，避免正式校准结束时额外产生一次紧邻读取。
+        /// </summary>
+        private async Task WaitForNextCycleAsync(long cycleStarted, CancellationToken token)
+        {
+            while (true)
+            {
+                int elapsedMilliseconds = (int)Math.Ceiling(Stopwatch.GetElapsedTime(cycleStarted).TotalMilliseconds);
+                int remainingMilliseconds = CurrentIntervalMilliseconds - elapsedMilliseconds;
+                if (remainingMilliseconds <= 0) return;
+
+                using CancellationTokenSource waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+                Task delayTask = Task.Delay(remainingMilliseconds, waitCancellation.Token);
+                Task intervalChangedTask = _intervalChangedSignal.WaitAsync(waitCancellation.Token);
+                try
+                {
+                    Task completedTask = await Task.WhenAny(delayTask, intervalChangedTask).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+                    if (ReferenceEquals(completedTask, delayTask)) return;
+                }
+                finally
+                {
+                    waitCancellation.Cancel();
+                }
             }
         }
     }

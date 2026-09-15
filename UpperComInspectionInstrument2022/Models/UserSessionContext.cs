@@ -28,5 +28,7 @@ namespace UpperComInspectionInstrument2022.Models
         {
             Current = null;
         }
+
+      
     }
 }

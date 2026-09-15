@@ -64,7 +64,6 @@ namespace UpperComInspectionInstrument2022.Views
             EquipmentSerialNumberTextBox.Text = CalibrationTaskContext.EquipmentSerialNumber;
             MeasurementRangeTextBox.Text = CalibrationTaskContext.MeasurementRange;
             CalibrationLocationTextBox.Text = CalibrationTaskContext.CalibrationLocation;
-            CalibrationDatePicker.SelectedDate = CalibrationTaskContext.CalibrationDate;
             CalibratorTextBox.Text = CalibrationTaskContext.Calibrator;
             VerifierTextBox.Text = CalibrationTaskContext.Verifier;
             FurnaceChamberLengthTextBox.Text = FormatOptional(CalibrationTaskContext.FurnaceChamberLengthMm);
@@ -640,7 +639,7 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.DeviationDescription = DeviationDescriptionTextBox.Text.Trim();
             CalibrationTaskContext.Calibrator = CalibratorTextBox.Text.Trim();
             CalibrationTaskContext.Verifier = VerifierTextBox.Text.Trim();
-            CalibrationTaskContext.CalibrationDate = CalibrationDatePicker.SelectedDate ?? DateTime.Today;
+            CalibrationTaskContext.CalibrationDate = DateTime.Today;
             CalibrationTaskContext.EnvironmentInterferenceConfirmed = true;
             CalibrationTaskContext.IsConfigured = true;
             CalibrationTaskContext.HasCompletedCalibration = false;
