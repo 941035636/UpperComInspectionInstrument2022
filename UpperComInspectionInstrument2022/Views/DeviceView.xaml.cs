@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 using UpperComInspectionInstrument2022.Services;
 
@@ -31,19 +32,10 @@ namespace UpperComInspectionInstrument2022.Views
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             bool isFurnace = IsFurnaceMode;
-            if (!TryReadRequiredText(LaboratoryNameTextBox, "实验室名称") ||
-                !TryReadRequiredText(LaboratoryAddressTextBox, "实验室地址") ||
-                !TryReadRequiredText(StandardNameTextBox, "标准器名称") ||
-                !TryReadRequiredText(CertificateNumberTextBox, "标准器证书编号")) return;
-            if (!ValidityDatePicker.SelectedDate.HasValue)
-            {
-                MessageBox.Show("请选择标准器证书有效期。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
-                ValidityDatePicker.Focus();
-                return;
-            }
-            if (!TryReadPositiveDouble(TemperatureResolutionTextBox, "温度分辨力", out double temperatureResolution) ||
-                !TryReadPositiveDouble(TemperatureUncertaintyTextBox, "温度扩展不确定度", out double temperatureUncertainty) ||
-                !TryReadPositiveDouble(TemperatureCoverageTextBox, "温度包含因子", out double temperatureCoverage)) return;
+            // 标准器资料允许先留空。用户可以先保存任务，正式校准前再补齐并由工作台进行完整性校验。
+            if (!TryReadOptionalPositiveDouble(TemperatureResolutionTextBox, "温度分辨力", out double temperatureResolution) ||
+                !TryReadOptionalPositiveDouble(TemperatureUncertaintyTextBox, "温度扩展不确定度", out double temperatureUncertainty) ||
+                !TryReadOptionalPositiveDouble(TemperatureCoverageTextBox, "温度包含因子", out double temperatureCoverage)) return;
 
             double humidityResolution = SystemSettingsContext.HumidityResolution;
             double humidityUncertainty = SystemSettingsContext.HumidityUncertainty;
@@ -51,20 +43,28 @@ namespace UpperComInspectionInstrument2022.Views
             double temperatureStabilityChange = SystemSettingsContext.TemperatureStabilityChange;
             double humidityStabilityChange = SystemSettingsContext.HumidityStabilityChange;
             if (!isFurnace &&
-                (!TryReadPositiveDouble(HumidityResolutionTextBox, "湿度分辨力", out humidityResolution) ||
-                     !TryReadPositiveDouble(HumidityUncertaintyTextBox, "湿度扩展不确定度", out humidityUncertainty) ||
-                     !TryReadPositiveDouble(HumidityCoverageTextBox, "湿度包含因子", out humidityCoverage) ||
-                     !TryReadNonNegativeDouble(TemperatureStabilityChangeTextBox, "温度修正值最大变化", out temperatureStabilityChange) ||
-                     !TryReadNonNegativeDouble(HumidityStabilityChangeTextBox, "湿度修正值最大变化", out humidityStabilityChange))) return;
+                (!TryReadOptionalPositiveDouble(HumidityResolutionTextBox, "湿度分辨力", out humidityResolution) ||
+                     !TryReadOptionalPositiveDouble(HumidityUncertaintyTextBox, "湿度扩展不确定度", out humidityUncertainty) ||
+                     !TryReadOptionalPositiveDouble(HumidityCoverageTextBox, "湿度包含因子", out humidityCoverage) ||
+                     !TryReadOptionalNonNegativeDouble(TemperatureStabilityChangeTextBox, "温度修正值最大变化", out temperatureStabilityChange) ||
+                     !TryReadOptionalNonNegativeDouble(HumidityStabilityChangeTextBox, "湿度修正值最大变化", out humidityStabilityChange))) return;
 
-            if (!ChannelCorrectionService.TryParse(TemperatureCorrectionsTextBox.Text, 50, out _, out string temperatureCorrectionError))
+            if (!ChannelCorrectionService.TryParse(
+                    TemperatureCorrectionsTextBox.Text,
+                    InspectionInstrumentProtocol.PhysicalTemperatureChannelCount,
+                    out _,
+                    out string temperatureCorrectionError))
             {
                 MessageBox.Show(temperatureCorrectionError, "温度通道修正", MessageBoxButton.OK, MessageBoxImage.Warning);
                 TemperatureCorrectionsTextBox.Focus();
                 return;
             }
             if (!isFurnace &&
-                !ChannelCorrectionService.TryParse(HumidityCorrectionsTextBox.Text, 10, out _, out string humidityCorrectionError))
+                !ChannelCorrectionService.TryParse(
+                    HumidityCorrectionsTextBox.Text,
+                    InspectionInstrumentProtocol.PhysicalHumidityChannelCount,
+                    out _,
+                    out string humidityCorrectionError))
             {
                 MessageBox.Show(humidityCorrectionError, "湿度通道修正", MessageBoxButton.OK, MessageBoxImage.Warning);
                 HumidityCorrectionsTextBox.Focus();
@@ -119,16 +119,22 @@ namespace UpperComInspectionInstrument2022.Views
             if (Application.Current.MainWindow is MainWindow owner)
                 owner.NotifySystemSettingsSaved();
 
+            bool standardProfileComplete = CalibrationTaskContext.TryValidateSystemStandardSettings(
+                _standardIndex,
+                CalibrationTaskContext.StandardIndex == 0 && CalibrationTaskContext.CalibrationTypeIndex == 1,
+                out _);
             StatusTextBlock.Text = formalCalibrationRunning
                 ? "系统资料已保存；当前正式校准仍使用启动时冻结的修正值，新值用于后续实时测量和任务。"
                 : currentTaskUpdated
                     ? "系统资料已保存并同步当前任务；通道修正从下一组实时数据生效。"
-                    : string.IsNullOrWhiteSpace(taskSyncWarning)
+                    : !standardProfileComplete
+                        ? "系统资料已保存；标准器资料暂未完整，正式校准前请补充。"
+                        : string.IsNullOrWhiteSpace(taskSyncWarning)
                         ? "系统资料已保存；通道修正从下一组实时数据生效。"
                         : $"系统资料已保存；当前任务未同步：{taskSyncWarning}";
-            StatusTextBlock.Foreground = string.IsNullOrWhiteSpace(taskSyncWarning)
-                ? System.Windows.Media.Brushes.DarkGreen
-                : System.Windows.Media.Brushes.DarkOrange;
+            StatusTextBlock.Foreground = !standardProfileComplete || !string.IsNullOrWhiteSpace(taskSyncWarning)
+                ? System.Windows.Media.Brushes.DarkOrange
+                : System.Windows.Media.Brushes.DarkGreen;
         }
 
         /// <summary>
@@ -197,29 +203,30 @@ namespace UpperComInspectionInstrument2022.Views
             HumidityCoverageTextBox.Text = SystemSettingsContext.HumidityCoverage.ToString("0.###");
         }
 
-        /// <summary>检查校准报告和标准器追溯所需的短文本字段。</summary>
-        private static bool TryReadRequiredText(TextBox textBox, string name)
+        /// <summary>读取可选的正数；留空表示该标准器参数暂未维护，正式校准前再补充。</summary>
+        private static bool TryReadOptionalPositiveDouble(TextBox textBox, string name, out double value)
         {
-            if (!string.IsNullOrWhiteSpace(textBox.Text)) return true;
-            MessageBox.Show($"{name}不能为空。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
-            textBox.Focus();
-            return false;
-        }
-
-        /// <summary>读取必须大于 0 的有限数；失败时提示并聚焦对应输入框。</summary>
-        private static bool TryReadPositiveDouble(TextBox textBox, string name, out double value)
-        {
+            if (string.IsNullOrWhiteSpace(textBox.Text))
+            {
+                value = 0;
+                return true;
+            }
             if (double.TryParse(textBox.Text, out value) && double.IsFinite(value) && value > 0) return true;
-            MessageBox.Show($"{name}必须是大于 0 的有效数字。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show($"{name}如果填写，必须是大于 0 的有效数字。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
             textBox.Focus();
             return false;
         }
 
-        /// <summary>读取允许为 0、但不能为负数的有限数。</summary>
-        private static bool TryReadNonNegativeDouble(TextBox textBox, string name, out double value)
+        /// <summary>读取可选的非负数；留空表示该标准器参数暂未维护。</summary>
+        private static bool TryReadOptionalNonNegativeDouble(TextBox textBox, string name, out double value)
         {
+            if (string.IsNullOrWhiteSpace(textBox.Text))
+            {
+                value = 0;
+                return true;
+            }
             if (double.TryParse(textBox.Text, out value) && double.IsFinite(value) && value >= 0) return true;
-            MessageBox.Show($"{name}必须是大于等于 0 的有效数字。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show($"{name}如果填写，必须是大于等于 0 的有效数字。", "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
             textBox.Focus();
             return false;
         }

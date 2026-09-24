@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using UpperComInspectionInstrument2022.Communication;
 
 namespace UpperComInspectionInstrument2022.Models
 {
@@ -25,6 +27,8 @@ namespace UpperComInspectionInstrument2022.Models
         public static string SensorTypeCode { get; set; } = string.Empty;
         public static int PointSelectionIndex { get; set; }
         public static int PointLayoutModeIndex { get; set; }
+        /// <summary>正式采样计划模式：0=按规范默认计划，1=按设备运行状况或用户需求调整。</summary>
+        public static int SamplingPlanModeIndex { get; set; }
         public static int LoadConditionIndex { get; set; }
         public static int StabilityBasisIndex { get; set; } = 1;
         public static int AppearanceCheckIndex { get; set; }
@@ -33,6 +37,10 @@ namespace UpperComInspectionInstrument2022.Models
         public static int HumidityPointCount { get; set; }
         public static int TemperatureCenterPoint { get; set; } = 5;
         public static int HumidityCenterPoint { get; set; } = 1;
+        /// <summary>按逻辑点顺序保存物理温度接口号，例如第一个元素表示 T1 接到哪个 CH。</summary>
+        public static List<int> TemperatureChannelMapping { get; set; } = new();
+        /// <summary>按逻辑点顺序保存物理湿度接口号，例如第一个元素表示 H1 接到哪个湿度接口。</summary>
+        public static List<int> HumidityChannelMapping { get; set; } = new();
         public static int PlannedCount { get; set; } = 16;
         public static int SamplingIntervalSeconds { get; set; } = 120;
         public static int StableWaitMinutes { get; set; } = 30;
@@ -138,14 +146,40 @@ namespace UpperComInspectionInstrument2022.Models
                 LoadConditionIndex = snapshot.LoadConditionIndex;
                 StabilityBasisIndex = snapshot.StabilityBasisIndex;
                 AppearanceCheckIndex = snapshot.AppearanceCheckIndex;
-                TemperaturePointCount = snapshot.TemperaturePointCount > 0 ? snapshot.TemperaturePointCount : 9;
-                HumidityPointCount = snapshot.HumidityPointCount;
-                TemperatureCenterPoint = snapshot.TemperatureCenterPoint > 0
+                int loadedTemperatureCount = snapshot.TemperaturePointCount > 0 ? snapshot.TemperaturePointCount : 9;
+                TemperaturePointCount = Math.Clamp(
+                    loadedTemperatureCount,
+                    1,
+                    InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+                HumidityPointCount = Math.Clamp(
+                    snapshot.HumidityPointCount,
+                    0,
+                    InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
+                int loadedTemperatureCenter = snapshot.TemperatureCenterPoint > 0
                     ? snapshot.TemperatureCenterPoint
                     : snapshot.CenterPoint > 0 ? snapshot.CenterPoint : 5;
-                HumidityCenterPoint = snapshot.HumidityCenterPoint > 0 ? snapshot.HumidityCenterPoint : 1;
+                TemperatureCenterPoint = Math.Clamp(loadedTemperatureCenter, 1, TemperaturePointCount);
+                HumidityCenterPoint = Math.Clamp(
+                    snapshot.HumidityCenterPoint > 0 ? snapshot.HumidityCenterPoint : 1,
+                    1,
+                    Math.Max(1, HumidityPointCount));
+                TemperatureChannelMapping = Services.MeasurementChannelMappingService.Normalize(
+                    snapshot.TemperatureChannelMapping,
+                    TemperaturePointCount,
+                    InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+                HumidityChannelMapping = Services.MeasurementChannelMappingService.Normalize(
+                    snapshot.HumidityChannelMapping,
+                    HumidityPointCount,
+                    InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
                 PlannedCount = snapshot.PlannedCount > 0 ? snapshot.PlannedCount : StandardIndex == 1 ? 20 : 16;
                 SamplingIntervalSeconds = snapshot.SamplingIntervalSeconds > 0 ? snapshot.SamplingIntervalSeconds : StandardIndex == 1 ? 180 : 120;
+                int normativeCount = StandardIndex == 1 ? 20 : 16;
+                int normativeInterval = StandardIndex == 1 ? 180 : 120;
+                SamplingPlanModeIndex = Math.Clamp(
+                    snapshot.SamplingPlanModeIndex ??
+                    (PlannedCount == normativeCount && SamplingIntervalSeconds == normativeInterval ? 0 : 1),
+                    0,
+                    1);
                 StableWaitMinutes = snapshot.StableWaitMinutes >= 0 ? snapshot.StableWaitMinutes : StandardIndex == 1 ? 0 : 30;
                 SetTemperature = snapshot.SetTemperature;
                 SetHumidity = snapshot.SetHumidity;
@@ -188,9 +222,89 @@ namespace UpperComInspectionInstrument2022.Models
         /// <summary>将当前任务配置及标准器快照保存到当前 Windows 用户的本地 JSON 文件。</summary>
         public static void Save()
         {
+            NormalizeChannelMappings();
             string? directory = Path.GetDirectoryName(TaskPath);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
             File.WriteAllText(TaskPath, JsonSerializer.Serialize(CreateSnapshot(), new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        /// <summary>按当前测点数修复通道映射，兼容旧任务文件并保证物理接口不重复。</summary>
+        public static void NormalizeChannelMappings()
+        {
+            TemperatureChannelMapping = Services.MeasurementChannelMappingService.Normalize(
+                TemperatureChannelMapping,
+                TemperaturePointCount,
+                InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+            HumidityChannelMapping = Services.MeasurementChannelMappingService.Normalize(
+                HumidityChannelMapping,
+                HumidityPointCount,
+                InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
+        }
+
+        /// <summary>
+        /// 清空当前任务中冻结的标准器资料。
+        /// 任务可以先保存，标准器资料稍后补充；当本次快照不完整时必须清除旧快照，避免旧资料被误带入新任务。
+        /// </summary>
+        public static void ClearReferencedStandardSettings()
+        {
+            ReferencedLaboratoryName = string.Empty;
+            ReferencedLaboratoryAddress = string.Empty;
+            ReferencedStandardName = string.Empty;
+            ReferencedCertificateNumber = string.Empty;
+            ReferencedValidityDate = null;
+            ReferencedModel = string.Empty;
+            ReferencedSerialNumber = string.Empty;
+            ReferencedOrganization = string.Empty;
+            ReferencedTemperatureRange = string.Empty;
+            ReferencedHumidityRange = string.Empty;
+            ReferencedTemperatureResolution = 0;
+            ReferencedHumidityResolution = 0;
+            ReferencedAccuracySpecification = string.Empty;
+            ReferencedTemperatureCorrections = string.Empty;
+            ReferencedHumidityCorrections = string.Empty;
+            ReferencedTemperatureStabilityChange = 0;
+            ReferencedHumidityStabilityChange = 0;
+            ReferencedTemperatureUncertainty = 0;
+            ReferencedTemperatureCoverage = 0;
+            ReferencedHumidityUncertainty = 0;
+            ReferencedHumidityCoverage = 0;
+            ReferencedMeasuringInstrumentClass = 0;
+            ReferencedThermocoupleGrade = string.Empty;
+        }
+
+        /// <summary>
+        /// 只校验系统设置中的标准器资料，不修改当前任务快照。
+        /// 用于系统设置页面给出“可保存但正式校准前需补充”的状态提示。
+        /// </summary>
+        public static bool TryValidateSystemStandardSettings(int standardIndex, bool includesHumidity, out string error)
+        {
+            if (string.IsNullOrWhiteSpace(SystemSettingsContext.LaboratoryName) ||
+                string.IsNullOrWhiteSpace(SystemSettingsContext.LaboratoryAddress) ||
+                string.IsNullOrWhiteSpace(SystemSettingsContext.StandardName) ||
+                string.IsNullOrWhiteSpace(SystemSettingsContext.CertificateNumber) ||
+                !SystemSettingsContext.ValidityDate.HasValue)
+            {
+                error = "标准器身份资料尚未完整。";
+                return false;
+            }
+            if (SystemSettingsContext.ValidityDate.Value.Date < DateTime.Today)
+            {
+                error = "标准器证书已到期。";
+                return false;
+            }
+            return TryValidateStandardCapability(
+                standardIndex, includesHumidity,
+                SystemSettingsContext.TemperatureResolution,
+                SystemSettingsContext.TemperatureUncertainty,
+                SystemSettingsContext.TemperatureCoverage,
+                SystemSettingsContext.TemperatureStabilityChange,
+                SystemSettingsContext.HumidityResolution,
+                SystemSettingsContext.HumidityUncertainty,
+                SystemSettingsContext.HumidityCoverage,
+                SystemSettingsContext.HumidityStabilityChange,
+                SystemSettingsContext.MeasuringInstrumentClass,
+                SystemSettingsContext.ThermocoupleGrade,
+                out error);
         }
 
         /// <summary>
@@ -367,6 +481,7 @@ namespace UpperComInspectionInstrument2022.Models
             PointSelectionIndex = PointSelectionIndex,
             PointSelectionCode = PointSelectionIndex == 1 ? "customer" : "common",
             PointLayoutModeIndex = PointLayoutModeIndex,
+            SamplingPlanModeIndex = SamplingPlanModeIndex,
             LoadConditionIndex = LoadConditionIndex,
             StabilityBasisIndex = StabilityBasisIndex,
             AppearanceCheckIndex = AppearanceCheckIndex,
@@ -374,6 +489,8 @@ namespace UpperComInspectionInstrument2022.Models
             HumidityPointCount = HumidityPointCount,
             TemperatureCenterPoint = TemperatureCenterPoint,
             HumidityCenterPoint = HumidityCenterPoint,
+            TemperatureChannelMapping = new List<int>(TemperatureChannelMapping),
+            HumidityChannelMapping = new List<int>(HumidityChannelMapping),
             PlannedCount = PlannedCount,
             SamplingIntervalSeconds = SamplingIntervalSeconds,
             StableWaitMinutes = StableWaitMinutes,
@@ -476,6 +593,8 @@ namespace UpperComInspectionInstrument2022.Models
             /// <summary>稳定的校准点方案代码，避免显示选项调整后历史索引发生错位。</summary>
             public string? PointSelectionCode { get; set; }
             public int PointLayoutModeIndex { get; set; }
+            /// <summary>可空用于兼容尚未保存采样计划模式的旧任务文件。</summary>
+            public int? SamplingPlanModeIndex { get; set; }
             public int LoadConditionIndex { get; set; }
             public int StabilityBasisIndex { get; set; } = 1;
             public int AppearanceCheckIndex { get; set; }
@@ -484,6 +603,8 @@ namespace UpperComInspectionInstrument2022.Models
             public int CenterPoint { get; set; }
             public int TemperatureCenterPoint { get; set; }
             public int HumidityCenterPoint { get; set; }
+            public List<int>? TemperatureChannelMapping { get; set; }
+            public List<int>? HumidityChannelMapping { get; set; }
             public int PlannedCount { get; set; }
             public int SamplingIntervalSeconds { get; set; }
             public int StableWaitMinutes { get; set; } = -1;

@@ -10,8 +10,14 @@ namespace UpperComInspectionInstrument2022.Services
     public interface IInspectionMeasurementReader
     {
         /// <summary>
-        /// 按校准类型读取一组完整通道数据；通信或协议解析失败时抛出异常。
+        /// 按校准类型和本轮实际测点数读取一组完整通道数据；通信或协议解析失败时抛出异常。
+        /// 点数代表当前任务实际使用的物理通道数量，不代表协议预留容量。
         /// </summary>
-        List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId);
+        List<InspectionChannelData> ReadMeasurements(
+            string calibrationType,
+            byte slaveAddress,
+            long acquisitionId,
+            int temperatureChannelCount,
+            int humidityChannelCount);
     }
 }

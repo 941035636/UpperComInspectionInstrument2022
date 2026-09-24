@@ -376,3 +376,8 @@ FodyWeavers.xsd
 /tmp/precision-preview/
 /tmp/report-preview/
 /tmp/render-report-workbook.mjs
+/tmp/build-*/
+
+# Local customer delivery packages (generated from the tracked source and installer scripts)
+/温湿度巡检仪安装包/
+/温湿度巡检仪安装包.rar

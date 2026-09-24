@@ -24,5 +24,8 @@ namespace UpperComInspectionInstrument2022.Communication
 
         /// <summary>从响应数据区解析出的 16 位寄存器。</summary>
         public ushort[] ? Registers { get; set; }
+
+        /// <summary>从功能码 01 响应数据区解析出的线圈状态。</summary>
+        public bool[]? Coils { get; set; }
     }
 }

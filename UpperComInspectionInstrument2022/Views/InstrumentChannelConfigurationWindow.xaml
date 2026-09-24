@@ -1,0 +1,60 @@
+<Window x:Class="UpperComInspectionInstrument2022.Views.InstrumentChannelConfigurationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="巡检仪物理通道配置" Width="860" Height="720"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip" Background="#EEF2F6">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Background="White" Padding="24,18" BorderBrush="#D8E0EA" BorderThickness="0,0,0,1">
+            <StackPanel>
+                <TextBlock Text="巡检仪物理通道配置" FontSize="22" FontWeight="Bold" Foreground="#0F172A"/>
+                <TextBlock Margin="0,6,0,0" Foreground="#64748B" TextWrapping="Wrap"
+                          Text="读取使用 4 寄存器小分段并校验配置值范围，丢帧或旧测量帧只补读受影响分段；保存只写变化通道并逐项读回，仅收到明确 Modbus 异常拒绝时才进入兼容配置模式。"/>
+            </StackPanel>
+        </Border>
+
+        <TabControl Grid.Row="1" Margin="20,14">
+            <TabItem Header="温度接口 CH1～CH24">
+                <DataGrid x:Name="TemperatureGrid" Margin="10" AutoGenerateColumns="False" CanUserAddRows="False"
+                          CanUserDeleteRows="False" RowHeaderWidth="0" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="物理接口" Binding="{Binding ChannelLabel}" IsReadOnly="True" Width="*"/>
+                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                        <DataGridComboBoxColumn x:Name="SensorTypeColumn" Header="传感器类型"
+                                                SelectedValueBinding="{Binding SensorTypeCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                SelectedValuePath="Code" DisplayMemberPath="Name" Width="2*"/>
+                        <DataGridTextColumn Header="设备状态" Binding="{Binding ConfigurationStatus}" IsReadOnly="True" Width="1.4*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+            <TabItem Header="湿度接口 H1～H9">
+                <DataGrid x:Name="HumidityGrid" Margin="10" AutoGenerateColumns="False" CanUserAddRows="False"
+                          CanUserDeleteRows="False" RowHeaderWidth="0" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="湿度接口" Binding="{Binding ChannelLabel}" IsReadOnly="True" Width="*"/>
+                        <DataGridTextColumn Header="设备使能通道" Binding="{Binding DeviceChannelLabel}" IsReadOnly="True" Width="*"/>
+                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+                        <DataGridTextColumn Header="设备状态" Binding="{Binding ConfigurationStatus}" IsReadOnly="True" Width="1.5*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0" Padding="20,12">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusTextBlock" Text="尚未读取设备配置" FontWeight="SemiBold" Foreground="#B45309"/>
+                    <TextBlock x:Name="ByteOrderTextBlock" Margin="0,2,12,0" FontSize="11" Foreground="#64748B"/>
+                    <TextBlock x:Name="FrameTextBlock" Margin="0,3,12,0" FontSize="11" Foreground="#64748B" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="ReadButton" Width="130" Content="读取设备配置" Click="ReadButton_Click" Padding="14,8"/>
+                    <Button x:Name="SaveButton" Width="150" Margin="10,0,0,0" Content="写入并保存" Click="SaveButton_Click"
+                            IsEnabled="False" Padding="14,8" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+                    <Button x:Name="CloseButton" Width="80" Margin="10,0,0,0" Content="关闭" IsCancel="True" Padding="14,8"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

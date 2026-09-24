@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Windows;
@@ -26,6 +27,9 @@ namespace UpperComInspectionInstrument2022.Views
         private readonly RealTimeMeasurementViewModel _viewModel;
         private readonly InspectionDataAcquisitionService _acquisitionService;
         private readonly ModbusRtuClient _modbusClient;
+        private readonly InspectionInstrumentRunStateService _runStateService;
+        private readonly InspectionInstrumentConfigurationService _instrumentConfigurationService;
+        private readonly InspectionInstrumentChannelProfileService _channelProfileService;
         private readonly RealtimeMeasurementFileStorageService _realtimeStorageService;
         private bool _deviceResponding;
         private bool _requiredChannelsValid;
@@ -60,6 +64,9 @@ namespace UpperComInspectionInstrument2022.Views
             InitializeComponent();
             _acquisitionService = acquisitionService ?? throw new ArgumentNullException(nameof(acquisitionService));
             _modbusClient = modbusClient ?? throw new ArgumentNullException(nameof(modbusClient));
+            _runStateService = new InspectionInstrumentRunStateService(_modbusClient);
+            _instrumentConfigurationService = new InspectionInstrumentConfigurationService(_modbusClient);
+            _channelProfileService = InspectionInstrumentChannelProfileService.Default;
             _realtimeStorageService = RealtimeMeasurementFileStorageService.Default;
             _viewModel = new RealTimeMeasurementViewModel();
             DataContext = _viewModel;
@@ -72,8 +79,10 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTypeComboBox.SelectedIndex = 0;
             SensorTypeComboBox.ItemsSource = TemperatureSensorCatalog.DisplayNames;
             SensorTypeComboBox.SelectedIndex = -1;
-            for (int i = 0; i <= 50; i++) TemperaturePointCountComboBox.Items.Add(i.ToString());
-            for (int i = 0; i <= 10; i++) HumidityPointCountComboBox.Items.Add(i.ToString());
+            for (int i = 0; i <= InspectionInstrumentProtocol.PhysicalTemperatureChannelCount; i++)
+                TemperaturePointCountComboBox.Items.Add(i.ToString());
+            for (int i = 0; i <= InspectionInstrumentProtocol.PhysicalHumidityChannelCount; i++)
+                HumidityPointCountComboBox.Items.Add(i.ToString());
             for (int i = 0; i <= 30; i++) CalibrationCountComboBox.Items.Add(i.ToString());
             TemperaturePointCountComboBox.SelectedItem = "0";
             HumidityPointCountComboBox.SelectedItem = "0";
@@ -483,18 +492,30 @@ namespace UpperComInspectionInstrument2022.Views
                 : temperatureCenter;
             if (TryReadChannelNumber(e.PropertyName, "温度", out int temperatureChannel))
             {
+                int physicalChannel = GetMappedPhysicalChannel(ChannelType.Temperature, temperatureChannel);
                 e.Column.Header = temperatureChannel == temperatureCenter
-                    ? $"T{temperatureChannel} 中心 (℃)"
-                    : $"T{temperatureChannel} (℃)";
-                e.Column.Width = new DataGridLength(temperatureChannel == temperatureCenter ? 98 : 76);
+                    ? $"T{temperatureChannel}/CH{physicalChannel} 中心 (℃)"
+                    : $"T{temperatureChannel}/CH{physicalChannel} (℃)";
+                e.Column.Width = new DataGridLength(temperatureChannel == temperatureCenter ? 124 : 104);
             }
             else if (TryReadChannelNumber(e.PropertyName, "湿度", out int humidityChannel))
             {
+                int physicalChannel = GetMappedPhysicalChannel(ChannelType.Humidity, humidityChannel);
                 e.Column.Header = humidityChannel == humidityCenter
-                    ? $"H{humidityChannel} / O点 (%RH)"
-                    : $"H{humidityChannel} (%RH)";
-                e.Column.Width = new DataGridLength(humidityChannel == humidityCenter ? 116 : 92);
+                    ? $"H{humidityChannel}/接口H{physicalChannel} / O点 (%RH)"
+                    : $"H{humidityChannel}/接口H{physicalChannel} (%RH)";
+                e.Column.Width = new DataGridLength(humidityChannel == humidityCenter ? 156 : 130);
             }
+        }
+
+        /// <summary>取得逻辑测点绑定的物理接口；未建立任务时沿用同号接口。</summary>
+        private static int GetMappedPhysicalChannel(ChannelType type, int logicalPoint)
+        {
+            if (!CalibrationTaskContext.IsConfigured || logicalPoint < 1) return logicalPoint;
+            IReadOnlyList<int> mapping = type == ChannelType.Temperature
+                ? CalibrationTaskContext.TemperatureChannelMapping
+                : CalibrationTaskContext.HumidityChannelMapping;
+            return logicalPoint <= mapping.Count ? mapping[logicalPoint - 1] : logicalPoint;
         }
 
         /// <summary>从“温度5”或“湿度3”等内部列名中读取通道号。</summary>
@@ -538,9 +559,9 @@ namespace UpperComInspectionInstrument2022.Views
         /// </summary>
         private static string FormatMeasurementMatrixValue(InspectionChannelData channel)
         {
-            if (channel.IsValid) return channel.Value.ToString("F2");
+            if (channel.IsValid) return channel.Value.ToString("F2", CultureInfo.InvariantCulture);
             if (channel.Role == ChannelRole.Humidity && double.IsFinite(channel.Value))
-                return $"{channel.Value:F2}（异常）";
+                return $"{channel.Value.ToString("F2", CultureInfo.InvariantCulture)}（异常）";
 
             return "异常";
         }
@@ -600,7 +621,7 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>
         /// 校验串口和临时测量参数后启动连续实时采集。该操作不会自动开始正式校准。
         /// </summary>
-        private void StartAcquisitionButton_Click(object sender, RoutedEventArgs e)
+        private async void StartAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
             bool realtimeSessionStarted = false;
             try
@@ -615,11 +636,49 @@ namespace UpperComInspectionInstrument2022.Views
                     throw new InvalidOperationException("温度测点数必须大于 0，矩阵列数会按该数量生成。");
                 if (HasHumidityMode() && GetPointCount(HumidityPointCountComboBox) < 1)
                     throw new InvalidOperationException("湿度测点数必须大于 0，矩阵列数会按该数量生成。");
+                int temperatureChannelCount = HasTemperatureMode()
+                    ? GetPointCount(TemperaturePointCountComboBox)
+                    : 0;
+                int humidityChannelCount = HasHumidityMode()
+                    ? GetPointCount(HumidityPointCountComboBox)
+                    : 0;
+                int temperatureReadChannelCount = CalibrationTaskContext.IsConfigured && temperatureChannelCount > 0
+                    ? MeasurementChannelMappingService.GetRequiredReadChannelCount(
+                        CalibrationTaskContext.TemperatureChannelMapping,
+                        temperatureChannelCount,
+                        InspectionInstrumentProtocol.PhysicalTemperatureChannelCount)
+                    : temperatureChannelCount;
+                int humidityReadChannelCount = CalibrationTaskContext.IsConfigured && humidityChannelCount > 0
+                    ? MeasurementChannelMappingService.GetRequiredReadChannelCount(
+                        CalibrationTaskContext.HumidityChannelMapping,
+                        humidityChannelCount,
+                        InspectionInstrumentProtocol.PhysicalHumidityChannelCount)
+                    : humidityChannelCount;
                 if (HasTemperatureMode() && SensorTypeComboBox.SelectedIndex < 0)
                     throw new InvalidOperationException("请选择巡检仪实际接入的温度传感器类型。");
                 int baudRate = int.Parse((BaudRateComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "115200");
                 if (!_modbusClient.IsOpen || !string.Equals(_modbusClient.PortName, portName, StringComparison.OrdinalIgnoreCase))
                     _modbusClient.Open(portName, baudRate);
+
+                StartAcquisitionButton.IsEnabled = false;
+                // 启动前通道使能一致性检查暂时停用。
+                // 原因：巡检仪本机配置页会用其内部旧状态覆盖0x015E～0x017E，使上位机不得不在每次启动前
+                // 额外读取33路配置并处理重新下发，增加了设备请求量和用户操作复杂度。该一致性应由下位机固件保证。
+                // 硬件端修复并完成联调后，如需恢复软件兜底，可取消下面代码块的注释。
+                /*
+                StatusTextBlock.Text = "正在核对巡检仪通道使能配置……";
+                if (!await EnsureSavedChannelConfigurationConsistentAsync(portName, slaveAddress))
+                {
+                    StatusTextBlock.Text = "已取消开始实时测量；设备通道配置未确认";
+                    StartAcquisitionButton.IsEnabled = true;
+                    return;
+                }
+                */
+
+                // 通道配置会停止巡检仪本机扫描，而测量保持寄存器仍保留最后一次值。
+                // 因此不能用“寄存器可读”代替“设备正在采集”；启动上位机循环前必须恢复并确认运行状态。
+                StatusTextBlock.Text = "正在启动巡检仪并确认传感器采集状态……";
+                await System.Threading.Tasks.Task.Run(() => _runStateService.EnsureStarted(slaveAddress));
 
                 string calibrationType = (CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度";
                 if (SaveRealtimeRecordCheckBox.IsChecked == true)
@@ -635,7 +694,12 @@ namespace UpperComInspectionInstrument2022.Views
                     realtimeSessionStarted = true;
                 }
 
-                if (!_acquisitionService.Start(slaveAddress, interval, calibrationType))
+                if (!_acquisitionService.Start(
+                        slaveAddress,
+                        interval,
+                        calibrationType,
+                        temperatureReadChannelCount,
+                        humidityReadChannelCount))
                     throw new InvalidOperationException("上一次采集仍在停止，请等待巡检仪当前请求结束后再试。");
                 _viewModel.IsAcquiring = true;
                 _trendLooksStable = false;
@@ -656,8 +720,9 @@ namespace UpperComInspectionInstrument2022.Views
                 UpdateRealtimeRecordStatus();
                 EvaluateFormalReadiness();
                 string sessionDirectory = _realtimeStorageService.CurrentSessionDirectory ?? string.Empty;
-                WriteOperation("开始实时测量", "成功", $"{portName} / 从站 {slaveAddress} / 周期 {interval} ms / {calibrationType}", sessionDirectory);
-                WriteRuntime("信息", "采集", "开始实时测量", $"{portName} / 从站 {slaveAddress} / 周期 {interval} ms / {calibrationType}", sessionDirectory);
+                string channelSummary = $"逻辑温度 {temperatureChannelCount} 点（读取至 CH{temperatureReadChannelCount}）/ 逻辑湿度 {humidityChannelCount} 点（读取至 H{humidityReadChannelCount}）";
+                WriteOperation("开始实时测量", "成功", $"{portName} / 从站 {slaveAddress} / 周期 {interval} ms / {calibrationType} / {channelSummary}", sessionDirectory);
+                WriteRuntime("信息", "采集", "开始实时测量", $"{portName} / 从站 {slaveAddress} / 周期 {interval} ms / {calibrationType} / {channelSummary}", sessionDirectory);
             }
             catch (Exception ex)
             {
@@ -666,10 +731,132 @@ namespace UpperComInspectionInstrument2022.Views
                 SaveRealtimeRecordCheckBox.IsEnabled = true;
                 UpdateRealtimeRecordStatus(ex.Message);
                 UpdateConnectionStatus();
+                if (!_acquisitionService.IsRunning && _modbusClient.IsOpen)
+                    StartAcquisitionButton.IsEnabled = true;
                 WriteOperation("开始实时测量", "失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
                 WriteRuntime("错误", "采集", "启动实时测量失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
                 MessageBox.Show(ex.Message, "启动实时测量失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>
+        /// 开始测量前核对设备当前33路使能与上位机最后一次成功保存快照。
+        /// 下位机本机配置界面覆盖寄存器时，由用户决定重新下发或取消启动。
+        /// </summary>
+        private async System.Threading.Tasks.Task<bool> EnsureSavedChannelConfigurationConsistentAsync(
+            string portName,
+            byte slaveAddress)
+        {
+            if (!_channelProfileService.TryLoad(
+                    portName,
+                    slaveAddress,
+                    out bool[] expectedEnabled,
+                    out DateTime savedAt,
+                    out string loadError))
+            {
+                if (!string.IsNullOrWhiteSpace(loadError))
+                    throw new InvalidOperationException(loadError);
+                return true;
+            }
+
+            InspectionInstrumentEnableState? actual = null;
+            while (actual == null)
+            {
+                string readError = string.Empty;
+                actual = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        return _instrumentConfigurationService.ReadChannelEnabled(slaveAddress);
+                    }
+                    catch (Exception ex)
+                    {
+                        readError = ex.Message;
+                        return null;
+                    }
+                });
+                if (actual != null) break;
+
+                WriteRuntime(
+                    "警告",
+                    "通道配置",
+                    "启动前配置核对未确认",
+                    readError);
+                MessageBoxResult retryChoice = MessageBox.Show(
+                    "暂时无法完整读取巡检仪的通道使能配置，实时测量尚未启动。\n\n" +
+                    $"{readError}\n\n" +
+                    "选择“是”再次核对；选择“否”将保持设备连接并返回工作台。",
+                    "无法确认设备通道配置",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (retryChoice != MessageBoxResult.Yes) return false;
+                StatusTextBlock.Text = "正在重新核对巡检仪通道使能配置……";
+            }
+
+            List<int> changedChannels = Enumerable.Range(0, expectedEnabled.Length)
+                .Where(index => actual.InvalidRegisters[index] ||
+                                actual.ChannelEnabled[index] != expectedEnabled[index])
+                .ToList();
+            if (changedChannels.Count == 0)
+            {
+                WriteRuntime(
+                    "信息",
+                    "通道配置",
+                    "启动前配置一致性检查",
+                    $"设备33路使能与 {savedAt:yyyy-MM-dd HH:mm:ss} 保存的上位机快照一致");
+                return true;
+            }
+
+            string changedText = string.Join("、", changedChannels.Select(index =>
+            {
+                string channelName = index < InspectionInstrumentProtocol.PhysicalTemperatureChannelCount
+                    ? $"CH{index + 1}"
+                    : $"H{index - InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + 1}";
+                string expected = expectedEnabled[index] ? "启用" : "关闭";
+                string current = actual.InvalidRegisters[index]
+                    ? $"异常0x{actual.RawRegisters[index]:X4}"
+                    : actual.ChannelEnabled[index] ? "启用" : "关闭";
+                return $"{channelName}（上次{expected}/当前{current}）";
+            }));
+            WriteRuntime(
+                "警告",
+                "通道配置",
+                "设备通道配置被改变",
+                $"与 {savedAt:yyyy-MM-dd HH:mm:ss} 保存的快照不一致：{changedText}");
+
+            MessageBoxResult choice = MessageBox.Show(
+                "检测到巡检仪当前通道使能与上位机最后一次保存值不一致。" +
+                "这通常是进入下位机通道配置页面后，其本机UI用旧的全选状态覆盖了寄存器。\n\n" +
+                $"差异通道：{changedText}\n\n" +
+                "选择“是”将重新下发上次保存的通道使能并读回确认；选择“否”取消本次实时测量。",
+                "设备通道配置已改变",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (choice != MessageBoxResult.Yes) return false;
+
+            StatusTextBlock.Text = "正在重新下发上次保存的通道使能配置……";
+            InspectionInstrumentConfiguration repaired = await System.Threading.Tasks.Task.Run(() =>
+            {
+                InspectionInstrumentConfiguration current = _instrumentConfigurationService.Read(slaveAddress);
+                return _instrumentConfigurationService.WriteAndSave(
+                    slaveAddress,
+                    current,
+                    current.TemperatureSensorTypes,
+                    expectedEnabled);
+            });
+            if (!_channelProfileService.TrySave(portName, slaveAddress, repaired.ChannelEnabled, out string saveError))
+                repaired.CommunicationWarning = string.IsNullOrWhiteSpace(repaired.CommunicationWarning)
+                    ? saveError
+                    : $"{repaired.CommunicationWarning}；{saveError}";
+
+            WriteRuntime(
+                string.IsNullOrWhiteSpace(repaired.CommunicationWarning) ? "信息" : "警告",
+                "通道配置",
+                "重新下发通道配置",
+                string.IsNullOrWhiteSpace(repaired.CommunicationWarning)
+                    ? $"已恢复 {changedChannels.Count} 个差异通道并读回确认"
+                    : $"已恢复差异通道；{repaired.CommunicationWarning}");
+            return true;
         }
 
         /// <summary>把当前连接、测点和可选任务信息冻结为本次普通实时测量会话的摘要。</summary>
@@ -887,22 +1074,23 @@ namespace UpperComInspectionInstrument2022.Views
             PublishGlobalRunStatus("正在安全停止巡检仪请求…", GlobalRunStatusTone.Warning);
             string storageWarning = string.Empty;
             string realtimeStorageWarning = string.Empty;
+            string acquisitionStopWarning = string.Empty;
             bool interruptedFormalCalibration = _calibrationRunning;
-            if (interruptedFormalCalibration)
-                CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
-            _realtimeStorageService.TryEndSession("已停止", "操作人员停止实时测量", out realtimeStorageWarning);
             _calibrationRunning = false;
-            RestoreRealtimeIntervalAfterFormalCalibration();
             try
             {
                 await _acquisitionService.StopAsync();
             }
             catch (Exception ex)
             {
-                realtimeStorageWarning = string.IsNullOrWhiteSpace(realtimeStorageWarning)
-                    ? "停止采集循环时发生异常：" + ex.Message
-                    : realtimeStorageWarning + "；停止采集循环时发生异常：" + ex.Message;
+                acquisitionStopWarning = "停止采集循环时发生异常：" + ex.Message;
             }
+
+            // 先等采集循环真正退出，再结束文件会话，避免暂停边界上仍有最后一组数据写入。
+            if (interruptedFormalCalibration)
+                CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员停止了正式校准采样", out storageWarning);
+            _realtimeStorageService.TryEndSession("已停止", "操作人员停止实时测量", out realtimeStorageWarning);
+            RestoreRealtimeIntervalAfterFormalCalibration();
 
             _viewModel.IsAcquiring = false;
             _trendLooksStable = false;
@@ -923,8 +1111,11 @@ namespace UpperComInspectionInstrument2022.Views
             if (interruptedFormalCalibration) stopDetails.Add("未完成的正式校准已标记中断");
             if (!string.IsNullOrWhiteSpace(storageWarning)) stopDetails.Add(storageWarning);
             if (!string.IsNullOrWhiteSpace(realtimeStorageWarning)) stopDetails.Add(realtimeStorageWarning);
+            if (!string.IsNullOrWhiteSpace(acquisitionStopWarning)) stopDetails.Add(acquisitionStopWarning);
             string stopDescription = string.Join("；", stopDetails);
-            bool stopHasWarning = !string.IsNullOrWhiteSpace(storageWarning) || !string.IsNullOrWhiteSpace(realtimeStorageWarning);
+            bool stopHasWarning = !string.IsNullOrWhiteSpace(storageWarning) ||
+                                  !string.IsNullOrWhiteSpace(realtimeStorageWarning) ||
+                                  !string.IsNullOrWhiteSpace(acquisitionStopWarning);
             WriteOperation("暂停实时测量", stopHasWarning ? "警告" : "成功", stopDescription, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
             WriteRuntime(stopHasWarning ? "警告" : "信息", "采集", "暂停实时测量", stopDescription, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
             UpdateRealtimeRecordStatus(realtimeStorageWarning);
@@ -932,6 +1123,8 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             if (!string.IsNullOrWhiteSpace(realtimeStorageWarning))
                 MessageBox.Show(realtimeStorageWarning, "实时记录状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!string.IsNullOrWhiteSpace(acquisitionStopWarning))
+                MessageBox.Show(acquisitionStopWarning, "暂停采集异常", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         /// <summary>经用户确认后清空工作台实时快照和正式样本，但保持当前设备连接状态。</summary>
@@ -1000,6 +1193,14 @@ namespace UpperComInspectionInstrument2022.Views
                     SystemSettingsContext.HumidityChannelCorrections,
                     CalibrationTaskContext.ReferencedTemperatureCorrections,
                     CalibrationTaskContext.ReferencedHumidityCorrections);
+                if (CalibrationTaskContext.IsConfigured)
+                {
+                    CalibrationTaskContext.NormalizeChannelMappings();
+                    data = MeasurementChannelMappingService.ApplyTaskMapping(
+                        data,
+                        CalibrationTaskContext.TemperatureChannelMapping,
+                        CalibrationTaskContext.HumidityChannelMapping);
+                }
                 int temperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0;
                 int humidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0;
                 List<InspectionChannelData> requiredChannels = MeasurementChannelSelectionService.SelectRequired(
@@ -1218,9 +1419,11 @@ namespace UpperComInspectionInstrument2022.Views
             string centerHumidityText = centerHumidity == null ? "-" : $"{centerHumidity.Value:F3} %RH";
             CenterTemperatureTextBlock.Text = centerTemperatureText;
             CenterHumidityTextBlock.Text = centerHumidityText;
+            string temperatureSource = centerTemperature == null ? "-" : $"CH{GetPhysicalChannel(centerTemperature)}";
+            string humiditySource = centerHumidity == null ? "-" : $"H{GetPhysicalChannel(centerHumidity)}";
             CenterSummaryTextBlock.Text = HasHumidityMode()
-                ? $"T CH{temperatureCenter}  {centerTemperatureText}\nH O/CH{humidityCenter}  {centerHumidityText}"
-                : $"CH{temperatureCenter}  {centerTemperatureText}";
+                ? $"T{temperatureCenter}/{temperatureSource}  {centerTemperatureText}\nH{humidityCenter}/{humiditySource} O点  {centerHumidityText}"
+                : $"T{temperatureCenter}/{temperatureSource}  {centerTemperatureText}";
         }
 
         /// <summary>把一组有效通道汇总为平均值及最小～最大范围。</summary>
@@ -1241,11 +1444,15 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>按业务角色生成用户能理解的通道名称。</summary>
+        private static int GetPhysicalChannel(InspectionChannelData channel) =>
+            channel.PhysicalChannel > 0 ? channel.PhysicalChannel : channel.Channel;
+
+        /// <summary>按业务角色生成用户可理解的通道名称，并兼容旧快照中没有物理通道号的数据。</summary>
         private static string GetChannelDisplayName(InspectionChannelData channel) => channel.Role switch
         {
-            ChannelRole.PrimaryTemperature => $"温度{channel.Channel}",
-            ChannelRole.Humidity => $"湿度{channel.Channel}",
-            _ => $"湿度探头温度{channel.Channel}"
+            ChannelRole.PrimaryTemperature => $"温度{channel.Channel}（物理 CH{GetPhysicalChannel(channel)}）",
+            ChannelRole.Humidity => $"湿度{channel.Channel}（物理 H{GetPhysicalChannel(channel)}）",
+            _ => $"湿度探头温度{channel.Channel}（物理 H{GetPhysicalChannel(channel)}）"
         };
 
         /// <summary>
@@ -1745,65 +1952,67 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>
-        /// 处理采集异常：前两次按退避时间自动重试；连续失败达到上限后才中断作业并释放串口。
+        /// 处理采集异常：保持串口打开并按退避时间持续重试。
+        /// 没有新响应时不会触发 DataAcquired，因此实时记录和正式校准都不会用旧数据补样本。
         /// </summary>
         private void OnAcquisitionError(Exception ex)
         {
             int failureCount = _acquisitionService.ConsecutiveFailureCount;
             int retryDelay = _acquisitionService.NextRetryDelayMilliseconds;
-            if (failureCount < _acquisitionService.MaxConsecutiveFailures)
+            bool persistentWarning = failureCount >= _acquisitionService.PersistentWarningFailureCount;
+            _deviceResponding = false;
+            WriteRuntime(
+                persistentWarning ? "错误" : "警告",
+                "通信",
+                persistentWarning ? "巡检仪连续无响应，保持连接重试" : "巡检仪读取失败，准备重试",
+                $"连续失败 {failureCount} 次；{retryDelay} ms 后重试；{ex.Message}",
+                _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
+            Dispatcher.BeginInvoke(() =>
             {
-                _deviceResponding = false;
-                WriteRuntime(
-                    "警告",
-                    "通信",
-                    "巡检仪读取失败，准备重试",
-                    $"连续失败 {failureCount}/{_acquisitionService.MaxConsecutiveFailures}；{retryDelay} ms 后重试；{ex.Message}",
-                    _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
-                Dispatcher.BeginInvoke(() =>
-                {
-                    UpdateConnectionStatus();
-                    StabilityTextBlock.Text = $"通信波动，正在重试（{failureCount}/{_acquisitionService.MaxConsecutiveFailures}）";
-                    StabilityTextBlock.Foreground = Brushes.DarkOrange;
-                    StatusTextBlock.Text = $"巡检仪本轮读取失败，{retryDelay / 1000.0:0.#} s 后自动重试：{ex.Message}";
-                    PublishGlobalRunStatus($"通信波动 · {retryDelay / 1000.0:0.#}s 后重试", GlobalRunStatusTone.Warning);
-                });
+                _requiredChannelsValid = false;
+                _trendLooksStable = false;
+                UpdateConnectionStatus();
+                EvaluateFormalReadiness();
+                StabilityTextBlock.Text = persistentWarning
+                    ? $"通信中断，持续重试（连续 {failureCount} 次）"
+                    : $"通信波动，正在重试（第 {failureCount} 次）";
+                StabilityTextBlock.Foreground = persistentWarning ? Brushes.DarkRed : Brushes.DarkOrange;
+                string sampleState = _calibrationRunning ? "；正式采样已暂停，等待新的有效响应" : string.Empty;
+                StatusTextBlock.Text = $"巡检仪本轮无响应，串口保持打开，{retryDelay / 1000.0:0.#} s 后自动重试{sampleState}：{ex.Message}";
+                PublishGlobalRunStatus(
+                    persistentWarning
+                        ? $"通信中断 · 持续重试（{failureCount}）"
+                        : $"通信波动 · {retryDelay / 1000.0:0.#}s 后重试",
+                    persistentWarning ? GlobalRunStatusTone.Error : GlobalRunStatusTone.Warning,
+                    false);
+            });
+        }
+
+        /// <summary>在串口已连接且采集停止时打开巡检仪物理通道配置。</summary>
+        private void ChannelConfigurationButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_modbusClient.IsOpen)
+            {
+                MessageBox.Show("请先连接巡检仪。", "设备通道配置", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (_acquisitionService.IsRunning)
+            {
+                MessageBox.Show("请先暂停实时测量，等待当前请求结束后再配置通道。", "设备通道配置", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (!byte.TryParse(SlaveAddressTextBox.Text.Trim(), out byte slaveAddress) || slaveAddress is 0 or > 247)
+            {
+                MessageBox.Show("从站地址必须是 1～247 的整数。", "设备通道配置", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            if (_calibrationRunning)
-                CalibrationFileStorageService.Default.TryMarkInterrupted($"巡检仪连续 {failureCount} 次采集异常导致正式校准中断：{ex.Message}", out _);
-            _calibrationRunning = false;
-            _realtimeStorageService.TryEndSession("采集异常", $"连续 {failureCount} 次读取失败：{ex.Message}", out _);
-            _deviceResponding = false;
-            _requiredChannelsValid = false;
-            _trendLooksStable = false;
-            _acquisitionService.Stop();
-            _viewModel.IsAcquiring = false;
-            _modbusClient.Close();
-            WriteOperation("实时测量异常中断", "失败", $"连续 {failureCount} 次读取失败：{ex.Message}", _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
-            WriteRuntime("错误", "通信", "巡检仪连续失败，停止请求", $"连续 {failureCount} 次；{ex.Message}", _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
-            Dispatcher.Invoke(() =>
+            InstrumentChannelConfigurationWindow window = new(_modbusClient, _acquisitionService, slaveAddress)
             {
-                RestoreRealtimeIntervalAfterFormalCalibration();
-                ConnectDeviceButton.IsEnabled = true;
-                StartAcquisitionButton.IsEnabled = false;
-                StopAcquisitionButton.IsEnabled = false;
-                StartCalibrationButton.IsEnabled = false;
-                PortComboBox.IsEnabled = true;
-                BaudRateComboBox.IsEnabled = true;
-                SetExecutionParametersEnabled(true);
-                UpdateConnectionStatus();
-                UpdateRealtimeRecordStatus(ex.Message);
-                EvaluateFormalReadiness();
-                StatusTextBlock.Text = $"连续 {failureCount} 次读取失败，已停止并释放串口";
-                PublishGlobalRunStatus("通信异常，已停止并释放串口", GlobalRunStatusTone.Error, false);
-                MessageBox.Show(
-                    $"巡检仪连续 {failureCount} 次读取失败，系统已停止请求以保护设备。\n\n最后一次错误：{ex.Message}\n\n请检查接线、电源、从站地址后重新连接。",
-                    "采集已安全停止",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            });
+                Owner = Window.GetWindow(this)
+            };
+            window.ShowDialog();
+            UpdateConnectionStatus();
         }
 
         /// <summary>在未采集时返回任务配置；采集运行中阻止修改任务参数。</summary>
@@ -1861,6 +2070,7 @@ namespace UpperComInspectionInstrument2022.Views
         private void UpdateConnectionStatus()
         {
             bool connected = _modbusClient.IsOpen;
+            ChannelConfigurationButton.IsEnabled = connected && !_acquisitionService.IsRunning;
             ConnectionStatusEllipse.Fill = connected && _deviceResponding ? Brushes.LimeGreen : Brushes.DarkOrange;
             ConnectionStatusTextBlock.Text = connected && _deviceResponding ? "设备已响应" : connected ? "串口已打开，等待设备响应" : "未连接";
             ConnectionStatusTextBlock.Foreground = connected && _deviceResponding ? Brushes.DarkGreen : Brushes.DarkOrange;

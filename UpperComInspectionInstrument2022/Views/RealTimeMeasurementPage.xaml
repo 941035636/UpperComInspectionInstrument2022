@@ -148,7 +148,12 @@
                         <Grid Margin="0,10,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <TextBlock Text="串口" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"/><ComboBox x:Name="PortComboBox" Grid.Column="1" Style="{StaticResource FieldCombo}" Margin="0"/>
-                            <TextBlock Grid.Column="2" Text="波特率" Style="{StaticResource FieldLabel}" Margin="12,0,6,0"/><ComboBox x:Name="BaudRateComboBox" Grid.Column="3" Style="{StaticResource FieldCombo}" Margin="0"><ComboBoxItem Content="115200"/><ComboBoxItem Content="9600"/></ComboBox>
+                            <TextBlock Grid.Column="2" Text="波特率" Style="{StaticResource FieldLabel}" Margin="12,0,6,0"/>
+                            <ComboBox x:Name="BaudRateComboBox" Grid.Column="3" Style="{StaticResource FieldCombo}" Margin="0">
+                                <ComboBoxItem Content="115200"/>
+                                <ComboBoxItem Content="9600"/>
+                                <ComboBoxItem Content="38400"/>
+                            </ComboBox>
                         </Grid>
                         <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -156,6 +161,9 @@
                             <TextBlock Grid.Column="2" Text="轮询(ms)" ToolTip="实时读取完整设备数据的周期；正式采样开始时如慢于任务间隔，系统会临时自动加快" Style="{StaticResource FieldLabel}" Margin="12,0,6,0"/><TextBox x:Name="IntervalTextBox" Grid.Column="3" Text="2000" ToolTip="只控制实时设备轮询，不替代任务中的正式采样间隔" Style="{StaticResource FieldBox}" Margin="0"/>
                         </Grid>
                         <Button Content="刷新可用串口" Click="RefreshPortsButton_Click" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Stretch" Margin="0,9,0,0"/>
+                        <Button x:Name="ChannelConfigurationButton" Content="设备通道配置" Click="ChannelConfigurationButton_Click"
+                                Style="{StaticResource SecondaryButton}" HorizontalAlignment="Stretch" Margin="0,7,0,0" IsEnabled="False"
+                                ToolTip="读取或修改巡检仪24路温度、9路湿度接口的使能状态；采集中不可操作"/>
 
                         <Border Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" Padding="10" Margin="0,10,0,0">
                             <StackPanel>

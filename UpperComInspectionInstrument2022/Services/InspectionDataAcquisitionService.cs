@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 
 namespace UpperComInspectionInstrument2022.Services
@@ -21,14 +22,19 @@ namespace UpperComInspectionInstrument2022.Services
         private Task? _loopTask;
         private long _acquisitionId;
         private string _calibrationType = "温度";
+        private int _temperatureChannelCount = InspectionInstrumentProtocol.PhysicalTemperatureChannelCount;
+        private int _humidityChannelCount;
         private bool _isRunning;
         private int _intervalMilliseconds = 2000;
         private int _lastReadDurationMilliseconds;
         private int _consecutiveFailureCount;
         private int _nextRetryDelayMilliseconds;
 
-        /// <summary>连续通信失败达到该次数后，页面才会把本次采集判定为不可继续。</summary>
-        public int MaxConsecutiveFailures { get; } = 3;
+        /// <summary>
+        /// 连续通信失败达到该次数后，界面进入持续通信告警状态。
+        /// 该阈值只改变告警级别，不停止采集、不关闭串口；设备恢复响应后计数自动清零。
+        /// </summary>
+        public int PersistentWarningFailureCount { get; } = 3;
 
         /// <summary>后台采集循环是否尚未完全退出。</summary>
         public bool IsRunning
@@ -72,14 +78,53 @@ namespace UpperComInspectionInstrument2022.Services
         }
 
         /// <summary>按纯温度模式启动采集，供旧调用代码兼容使用。</summary>
-        public bool Start(byte slaveAddress, int intervalMilliseconds) => Start(slaveAddress, intervalMilliseconds, "温度");
+        public bool Start(byte slaveAddress, int intervalMilliseconds) => Start(
+            slaveAddress,
+            intervalMilliseconds,
+            "温度",
+            InspectionInstrumentProtocol.PhysicalTemperatureChannelCount,
+            0);
 
         /// <summary>
-        /// 启动唯一后台采集循环。旧循环尚未退出时返回 false，避免两个循环交替访问同一串口。
-        /// 最小轮询周期限制为 200 ms。
+        /// 按当前设备全部实际接口启动采集，保留给旧调用代码使用。
+        /// 工作台应使用带点数的重载，避免读取任务没有使用的预留通道。
         /// </summary>
         public bool Start(byte slaveAddress, int intervalMilliseconds, string calibrationType)
         {
+            bool hasTemperature = calibrationType.Contains("温度", StringComparison.Ordinal);
+            bool hasHumidity = calibrationType.Contains("湿度", StringComparison.Ordinal);
+            return Start(
+                slaveAddress,
+                intervalMilliseconds,
+                calibrationType,
+                hasTemperature ? InspectionInstrumentProtocol.PhysicalTemperatureChannelCount : 0,
+                hasHumidity ? InspectionInstrumentProtocol.PhysicalHumidityChannelCount : 0);
+        }
+
+        /// <summary>
+        /// 启动唯一后台采集循环。旧循环尚未退出时返回 false，避免两个循环交替访问同一串口。
+        /// 温湿度点数决定本轮功能码 03 实际读取的寄存器数量，而不是只控制页面显示列。
+        /// 最小轮询周期限制为 200 ms。
+        /// </summary>
+        public bool Start(
+            byte slaveAddress,
+            int intervalMilliseconds,
+            string calibrationType,
+            int temperatureChannelCount,
+            int humidityChannelCount)
+        {
+            string normalizedType = string.IsNullOrWhiteSpace(calibrationType) ? "温度" : calibrationType;
+            bool hasTemperature = normalizedType.Contains("温度", StringComparison.Ordinal);
+            bool hasHumidity = normalizedType.Contains("湿度", StringComparison.Ordinal);
+            if (hasTemperature)
+                InspectionInstrumentProtocol.GetTemperatureRegisterQuantity(temperatureChannelCount);
+            else
+                temperatureChannelCount = 0;
+            if (hasHumidity)
+                InspectionInstrumentProtocol.GetHumidityRegisterQuantity(humidityChannelCount);
+            else
+                humidityChannelCount = 0;
+
             if (intervalMilliseconds < 200) intervalMilliseconds = 200;
             CancellationTokenSource cts;
             lock (_stateLock)
@@ -87,7 +132,9 @@ namespace UpperComInspectionInstrument2022.Services
                 if (_loopTask is { IsCompleted: false }) return false;
                 cts = new CancellationTokenSource();
                 _cts = cts;
-                _calibrationType = string.IsNullOrWhiteSpace(calibrationType) ? "温度" : calibrationType;
+                _calibrationType = normalizedType;
+                _temperatureChannelCount = temperatureChannelCount;
+                _humidityChannelCount = humidityChannelCount;
                 _intervalMilliseconds = intervalMilliseconds;
                 _lastReadDurationMilliseconds = 0;
                 _consecutiveFailureCount = 0;
@@ -180,7 +227,12 @@ namespace UpperComInspectionInstrument2022.Services
                     long cycleStarted = Stopwatch.GetTimestamp();
                     try
                     {
-                        List<InspectionChannelData> data = _measurementReader.ReadMeasurements(_calibrationType, slaveAddress, acquisitionId);
+                        List<InspectionChannelData> data = _measurementReader.ReadMeasurements(
+                            _calibrationType,
+                            slaveAddress,
+                            acquisitionId,
+                            _temperatureChannelCount,
+                            _humidityChannelCount);
                         int readDurationMilliseconds = Math.Max(1, (int)Math.Ceiling(Stopwatch.GetElapsedTime(cycleStarted).TotalMilliseconds));
                         lock (_stateLock)
                         {
@@ -191,9 +243,15 @@ namespace UpperComInspectionInstrument2022.Services
                         if (!token.IsCancellationRequested) DataAcquired?.Invoke(acquisitionId, data);
                         readSucceeded = true;
                     }
-                    catch (Exception ex) when (!token.IsCancellationRequested)
+                    // 用户点击“暂停”时，当前同步串口读取不能被 CancellationToken 立即打断。
+                    // 如果该读取随后以超时结束，这只是停止过程的正常收尾，不能让 StopAsync
+                    // 以通信异常结束，更不能被页面误报为“实时记录未保存”。
+                    catch (Exception) when (token.IsCancellationRequested)
                     {
-                        bool reachedFailureLimit;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
                         lock (_stateLock)
                         {
                             _consecutiveFailureCount++;
@@ -201,18 +259,10 @@ namespace UpperComInspectionInstrument2022.Services
                                 _intervalMilliseconds,
                                 Math.Min(RetryMaximumDelayMilliseconds, RetryBaseDelayMilliseconds * _consecutiveFailureCount));
                             delayMilliseconds = _nextRetryDelayMilliseconds;
-                            reachedFailureLimit = _consecutiveFailureCount >= MaxConsecutiveFailures;
                         }
-                        try
-                        {
-                            AcquisitionError?.Invoke(ex);
-                        }
-                        finally
-                        {
-                            // 连续失败达到上限后终止循环。只有操作人员重新连接/启动才会产生新请求，
-                            // 避免断线设备被无限轮询。
-                            if (reachedFailureLimit) owner.Cancel();
-                        }
+                        // 偶发无响应只表示本轮没有取得新数据。保持串口和循环，按有上限的退避节拍继续请求；
+                        // 正式校准样本只在 DataAcquired 事件中保存，因此失败期间不会用旧值补样本。
+                        AcquisitionError?.Invoke(ex);
                     }
                     if (readSucceeded)
                         await WaitForNextCycleAsync(cycleStarted, token).ConfigureAwait(false);

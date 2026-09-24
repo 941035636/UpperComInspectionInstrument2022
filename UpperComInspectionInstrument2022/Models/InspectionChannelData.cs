@@ -55,6 +55,12 @@ namespace UpperComInspectionInstrument2022.Models
         public int Channel { get; set; }
 
         /// <summary>
+        /// 巡检仪上的实际物理接口号。未启用逻辑测点映射时与 <see cref="Channel"/> 相同；
+        /// 启用映射后，<see cref="Channel"/> 表示报告和矩阵中的逻辑测点号，本字段保留原始接线来源。
+        /// </summary>
+        public int PhysicalChannel { get; set; }
+
+        /// <summary>
         /// 通道类型
         /// </summary>
         public ChannelType Type { get; set; }

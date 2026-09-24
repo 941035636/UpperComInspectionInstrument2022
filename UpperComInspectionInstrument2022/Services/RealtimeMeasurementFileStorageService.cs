@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 
 namespace UpperComInspectionInstrument2022.Services
@@ -148,8 +149,10 @@ namespace UpperComInspectionInstrument2022.Services
                     error = "已有正在记录的实时测量会话，请先停止当前测量。";
                     return false;
                 }
-                if (info.TemperaturePointCount < 0 || info.TemperaturePointCount > 50 ||
-                    info.HumidityPointCount < 0 || info.HumidityPointCount > 10 ||
+                if (info.TemperaturePointCount < 0 ||
+                    info.TemperaturePointCount > InspectionInstrumentProtocol.PhysicalTemperatureChannelCount ||
+                    info.HumidityPointCount < 0 ||
+                    info.HumidityPointCount > InspectionInstrumentProtocol.PhysicalHumidityChannelCount ||
                     info.TemperaturePointCount + info.HumidityPointCount == 0)
                 {
                     error = "实时记录测点数无效：温度应为 0~50 点、湿度应为 0~10 点，且至少配置一种测量量。";
@@ -343,7 +346,7 @@ namespace UpperComInspectionInstrument2022.Services
         /// <summary>生成实时原始通道文件表头，字段与正式校准原始通道记录保持一致。</summary>
         private static string[] BuildRawChannelHeader() => new[]
         {
-            "会话序号", "采集序号", "采集时间", "通道类型", "通道号", "测量值", "单位", "修正前原始值",
+            "会话序号", "采集序号", "采集时间", "通道类型", "逻辑测点号", "物理通道号", "测量值", "单位", "修正前原始值",
             "证书修正值", "是否已修正", "数据是否有效", "数据状态", "状态说明", "原始HEX",
             "寄存器地址1", "寄存器地址2", "寄存器值1", "寄存器值2"
         };
@@ -386,7 +389,7 @@ namespace UpperComInspectionInstrument2022.Services
                 {
                     sessionSequence.ToString(CultureInfo.InvariantCulture), snapshot.Sequence.ToString(CultureInfo.InvariantCulture),
                     snapshot.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"), type, channel.ToString(CultureInfo.InvariantCulture),
-                    string.Empty, type == "温度" ? "℃" : "%RH", string.Empty, string.Empty, "否", "否", "Missing",
+                    string.Empty, string.Empty, type == "温度" ? "℃" : "%RH", string.Empty, string.Empty, "否", "否", "Missing",
                     "实时测量要求通道未返回", string.Empty, string.Empty, string.Empty, string.Empty, string.Empty
                 };
             }
@@ -395,6 +398,7 @@ namespace UpperComInspectionInstrument2022.Services
             {
                 sessionSequence.ToString(CultureInfo.InvariantCulture), snapshot.Sequence.ToString(CultureInfo.InvariantCulture),
                 snapshot.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"), type, item.Channel.ToString(CultureInfo.InvariantCulture),
+                (item.PhysicalChannel > 0 ? item.PhysicalChannel : item.Channel).ToString(CultureInfo.InvariantCulture),
                 FormatNumber(item.Value), item.Unit, FormatNumber(item.RawValue), FormatNumber(item.CorrectionValue),
                 item.HasAppliedCorrection ? "是" : "否", item.IsValid ? "是" : "否", item.DataStatus.ToString(), item.Status,
                 item.RawHex, $"0x{item.RegisterAddress1:X4}", $"0x{item.RegisterAddress2:X4}",

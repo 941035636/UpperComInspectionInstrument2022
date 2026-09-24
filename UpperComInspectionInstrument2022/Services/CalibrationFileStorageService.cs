@@ -410,6 +410,9 @@ namespace UpperComInspectionInstrument2022.Services
                 Pair("湿度测点数", CalibrationTaskContext.HumidityPointCount.ToString(CultureInfo.InvariantCulture)),
                 Pair("温度中心点", CalibrationTaskContext.TemperatureCenterPoint.ToString(CultureInfo.InvariantCulture)),
                 Pair("湿度中心点", CalibrationTaskContext.HumidityCenterPoint.ToString(CultureInfo.InvariantCulture)),
+                Pair("测点与物理通道绑定", MeasurementChannelMappingService.FormatSummary(
+                    CalibrationTaskContext.TemperatureChannelMapping,
+                    CalibrationTaskContext.HumidityChannelMapping)),
                 Pair("传感器类型", CalibrationTaskContext.SensorTypeCode),
                 Pair("计划样本数", CalibrationTaskContext.PlannedCount.ToString(CultureInfo.InvariantCulture)),
                 Pair("采样间隔(s)", CalibrationTaskContext.SamplingIntervalSeconds.ToString(CultureInfo.InvariantCulture)),

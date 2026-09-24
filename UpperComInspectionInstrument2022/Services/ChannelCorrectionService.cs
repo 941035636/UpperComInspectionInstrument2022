@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 
 namespace UpperComInspectionInstrument2022.Services
@@ -64,8 +65,16 @@ namespace UpperComInspectionInstrument2022.Services
         /// </summary>
         public static void Apply(List<InspectionChannelData> channels, string temperatureText, string humidityText)
         {
-            TryParse(temperatureText, 50, out Dictionary<int, double> temperatureCorrections, out _);
-            TryParse(humidityText, 10, out Dictionary<int, double> humidityCorrections, out _);
+            TryParse(
+                temperatureText,
+                InspectionInstrumentProtocol.PhysicalTemperatureChannelCount,
+                out Dictionary<int, double> temperatureCorrections,
+                out _);
+            TryParse(
+                humidityText,
+                InspectionInstrumentProtocol.PhysicalHumidityChannelCount,
+                out Dictionary<int, double> humidityCorrections,
+                out _);
             foreach (InspectionChannelData channel in channels)
             {
                 channel.RawValue = channel.Value;
@@ -76,7 +85,8 @@ namespace UpperComInspectionInstrument2022.Services
                     _ => null
                 };
                 if (source == null) continue;
-                if (!channel.IsValid || !source.TryGetValue(channel.Channel, out double correction)) continue;
+                int physicalChannel = channel.PhysicalChannel > 0 ? channel.PhysicalChannel : channel.Channel;
+                if (!channel.IsValid || !source.TryGetValue(physicalChannel, out double correction)) continue;
                 channel.CorrectionValue = correction;
                 channel.Value += correction;
                 channel.HasAppliedCorrection = true;

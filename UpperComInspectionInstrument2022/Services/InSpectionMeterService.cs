@@ -13,6 +13,8 @@ namespace UpperComInspectionInstrument2022.Services
     public class InspectionMeterService : IInspectionMeasurementReader
     {
         private readonly ModbusRtuClient _client;
+        private bool _useCompatibleTemperatureBlock;
+        private bool _useCompatibleHumidityBlock;
 
         /// <summary>使用已经由应用外壳管理生命周期的 Modbus 客户端创建协议服务。</summary>
         public InspectionMeterService(ModbusRtuClient client)
@@ -21,26 +23,27 @@ namespace UpperComInspectionInstrument2022.Services
         }
 
         /// <summary>
-        /// 一次性读取 CH1～CH50 温度通道。
-        /// 协议从寄存器 0x0001 开始，每个 IEEE 754 单精度值占两个寄存器。
+        /// 从 CH1 开始读取本轮任务实际使用的连续温度通道。
+        /// 协议从寄存器 0x0001 开始，每个 IEEE 754 单精度值占两个寄存器；
+        /// 协议中 CH25～CH50 是当前设备未安装的预留容量，不参与日常采集。
         /// </summary>
-
         public List<InspectionChannelData> ReadTemperatures(
-    byte slaveAddress,
-    long acquisitionId)
+            byte slaveAddress,
+            long acquisitionId,
+            int channelCount)
         {
-            var result =
-                new List<InspectionChannelData>();
+            var result = new List<InspectionChannelData>(channelCount);
 
-            // 50 个温度通道 × 每通道 2 个寄存器 = 一次读取 100 个寄存器。
-            ushort startAddress = 0x0001;
-            ushort quantity = 100;
+            ushort startAddress = InspectionInstrumentProtocol.TemperatureStartAddress;
+            ushort quantity = InspectionInstrumentProtocol.GetTemperatureRegisterQuantity(channelCount);
 
-            ModbusResponse response =
-                _client.ReadHoldingRegisters(
-                    slaveAddress,
-                    startAddress,
-                    quantity);
+            ModbusResponse response = ReadWithCompatibleBlockFallback(
+                slaveAddress,
+                startAddress,
+                quantity,
+                InspectionInstrumentProtocol.CompatibleTemperatureBlockRegisterCount,
+                "温度",
+                ref _useCompatibleTemperatureBlock);
 
             if (!response.Success)
             {
@@ -60,10 +63,10 @@ namespace UpperComInspectionInstrument2022.Services
             const int dataOffset = 3;
             const int bytesPerChannel = 4;
 
-            if (responseBytes.Length < dataOffset + 50 * bytesPerChannel + 2)
-                throw new InvalidOperationException("温度响应数据长度不足，无法解析 50 个通道");
+            if (responseBytes.Length < dataOffset + channelCount * bytesPerChannel + 2)
+                throw new InvalidOperationException($"温度响应数据长度不足，无法解析 {channelCount} 个通道");
 
-            for (int i = 0; i < 50; i++)
+            for (int i = 0; i < channelCount; i++)
             {
                 int registerIndex = i * 2;
                 int byteIndex = dataOffset + i * bytesPerChannel;
@@ -148,6 +151,7 @@ namespace UpperComInspectionInstrument2022.Services
                     new InspectionChannelData
                     {
                         Channel = i + 1,
+                        PhysicalChannel = i + 1,
 
                         Type =
                             ChannelType.Temperature,
@@ -201,38 +205,52 @@ namespace UpperComInspectionInstrument2022.Services
         public List<InspectionChannelData> ReadMeasurements(
             string calibrationType,
             byte slaveAddress,
-            long acquisitionId)
+            long acquisitionId,
+            int temperatureChannelCount,
+            int humidityChannelCount)
         {
             if (calibrationType == "湿度")
-                return ReadHumidityChannels(slaveAddress, acquisitionId);
+                return ReadHumidityChannels(slaveAddress, acquisitionId, humidityChannelCount);
 
             if (calibrationType == "温度+湿度" || calibrationType == "温湿度")
             {
-                List<InspectionChannelData> result = ReadTemperatures(slaveAddress, acquisitionId);
-                // 协议及 Qt 原程序在两帧之间保留约 200 ms，避免巡检仪接收器连续帧处理不完整。
-                System.Threading.Thread.Sleep(200);
-                result.AddRange(ReadHumidityChannels(slaveAddress, acquisitionId));
+                List<InspectionChannelData> result = ReadTemperatures(
+                    slaveAddress,
+                    acquisitionId,
+                    temperatureChannelCount);
+                // 新版固件在连续读取温度区后需要一定处理时间再准备湿度区。
+                // 实测 200 ms 会出现温度/湿度响应交替丢帧，约 1 s 间隔可稳定返回完整帧。
+                // 该等待只发生在同一轮温湿度读取内部，不改变用户设置的采样周期。
+                System.Threading.Thread.Sleep(1000);
+                result.AddRange(ReadHumidityChannels(slaveAddress, acquisitionId, humidityChannelCount));
                 return result;
             }
 
-            return ReadTemperatures(slaveAddress, acquisitionId);
+            return ReadTemperatures(slaveAddress, acquisitionId, temperatureChannelCount);
         }
 
         /// <summary>
-        /// 读取 0x0065～0x0078 共 20 个寄存器。
-        /// 协议按“湿度1、伴随温度1、湿度2、伴随温度2……”交替排列，共形成 10 支湿度探头数据。
+        /// 从 0x0065 开始读取本轮实际使用的湿度接口。
+        /// 每个接口按“湿度值、伴随温度”占两个寄存器；第 10 组地址属于当前设备预留容量。
         /// </summary>
         private List<InspectionChannelData> ReadHumidityChannels(
             byte slaveAddress,
-            long acquisitionId)
+            long acquisitionId,
+            int channelCount)
         {
-            const ushort startAddress = 0x0065;
-            const ushort quantity = 20;
-            ModbusResponse response = _client.ReadHoldingRegisters(slaveAddress, startAddress, quantity);
+            const ushort startAddress = InspectionInstrumentProtocol.HumidityStartAddress;
+            ushort quantity = InspectionInstrumentProtocol.GetHumidityRegisterQuantity(channelCount);
+            ModbusResponse response = ReadWithCompatibleBlockFallback(
+                slaveAddress,
+                startAddress,
+                quantity,
+                InspectionInstrumentProtocol.CompatibleHumidityBlockRegisterCount,
+                "湿度",
+                ref _useCompatibleHumidityBlock);
             if (!response.Success)
                 throw new InvalidOperationException(response.ErrorMessage ?? "读取湿度数据失败");
 
-            var result = new List<InspectionChannelData>();
+            var result = new List<InspectionChannelData>(quantity);
             DateTime timestamp = DateTime.Now;
             for (int i = 0; i < quantity; i++)
             {
@@ -251,6 +269,7 @@ namespace UpperComInspectionInstrument2022.Services
                 result.Add(new InspectionChannelData
                 {
                     Channel = i / 2 + 1,
+                    PhysicalChannel = i / 2 + 1,
                     Type = humidity ? ChannelType.Humidity : ChannelType.Temperature,
                     Role = humidity ? ChannelRole.Humidity : ChannelRole.HumidityProbeTemperature,
                     Value = value,
@@ -269,6 +288,53 @@ namespace UpperComInspectionInstrument2022.Services
             }
             return result;
         }
+
+        /// <summary>
+        /// 优先按任务实际点数读取；可变长度请求无响应时，自动切换到 Qt 旧程序使用的固定协议块。
+        /// 固定块一旦成功，本服务后续保持该兼容方式，避免每轮都先经历一次短帧超时。
+        /// 调用方始终只解析任务要求的前 N 路，不会把预留通道加入矩阵、存储或校准计算。
+        /// </summary>
+        private ModbusResponse ReadWithCompatibleBlockFallback(
+            byte slaveAddress,
+            ushort startAddress,
+            ushort requestedQuantity,
+            ushort compatibleBlockQuantity,
+            string channelName,
+            ref bool useCompatibleBlock)
+        {
+            if (useCompatibleBlock)
+            {
+                return _client.ReadHoldingRegisters(
+                    slaveAddress,
+                    startAddress,
+                    compatibleBlockQuantity);
+            }
+
+            ModbusResponse response = _client.ReadHoldingRegisters(
+                slaveAddress,
+                startAddress,
+                requestedQuantity);
+            if (response.Success || requestedQuantity >= compatibleBlockQuantity)
+                return response;
+
+            string requestedError = response.ErrorMessage ?? "设备未返回有效响应";
+            System.Threading.Thread.Sleep(500);
+            ModbusResponse fallback = _client.ReadHoldingRegisters(
+                slaveAddress,
+                startAddress,
+                compatibleBlockQuantity);
+            if (fallback.Success)
+            {
+                useCompatibleBlock = true;
+                return fallback;
+            }
+
+            fallback.ErrorMessage =
+                $"{channelName}按任务范围读取失败：{requestedError}；" +
+                $"按固定协议块兼容读取仍失败：{fallback.ErrorMessage ?? "设备未返回有效响应"}";
+            return fallback;
+        }
+
         /// <summary>
         /// 判断温度值是否为有限数且位于本系统支持的传感器总量程内。
         /// </summary>
@@ -339,15 +405,31 @@ namespace UpperComInspectionInstrument2022.Services
 
         /// <summary>
         /// 解析湿度区域的有符号百分之一单位值。
-        /// 设备在单个 Modbus 寄存器内部使用低字节在前，因此必须先交换两个字节。
+        /// 设备的常规数据是低字节在前，因此优先交换两个字节；部分设备/固件
+        /// 在负数场景会按标准高字节在前返回，方法会在常规结果超出合理范围时
+        /// 回退到未交换的有符号补码解释，确保负号不会被解析成正数。
         /// </summary>
         public static double DecodeSignedHundredths(ushort register)
         {
-            // 该巡检仪的 0x0065～0x0078 区域虽然通过 Modbus 寄存器返回，
-            // 但数值本身按 REG_DATA_1 的低字节、高字节顺序存放。
-            // 例如现场响应 AC 02 应解释为 0x02AC，即 6.84，而不是 -215.02。
+            // 当前设备使用的 0x0065～0x0076 区域通常按 REG_DATA_1 的低字节、
+            // 高字节顺序存放。例如 0xAC02 应解释为 0x02AC，即 6.84，
+            // 而不是 -215.02。
             ushort swapped = (ushort)((register >> 8) | (register << 8));
-            return unchecked((short)swapped) / 100.0;
+            double swappedValue = unchecked((short)swapped) / 100.0;
+            double directValue = unchecked((short)register) / 100.0;
+
+            // 湿度正常在 0～100 %RH；设备出现负湿度时仍要保留其符号，
+            // 因此将 -100～100 作为有符号测量候选范围。优先常规字节序，
+            // 只有常规结果明显不可能时才采用标准字节序结果。
+            if (swappedValue is >= -100 and <= 100)
+                return swappedValue;
+
+            if (directValue is >= -100 and <= 100)
+                return directValue;
+
+            // 两种解释都超出范围时保留设备约定的常规字节序，交由上层标记异常，
+            // 同时不篡改原始值，便于在原始记录中追溯报文。
+            return swappedValue;
         }
     }
 }

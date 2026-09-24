@@ -26,7 +26,7 @@
         <Border Grid.Row="0" Background="White" Padding="28,20" BorderBrush="#D8E0EA" BorderThickness="0,0,0,1">
             <StackPanel>
                 <TextBlock Text="系统设置" FontSize="28" FontWeight="Bold" Foreground="#0F172A"/>
-                <TextBlock Text="维护长期有效的实验室与标准器资料；被校设备、现场条件和采样计划在每个校准任务中单独记录。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
+                <TextBlock Text="维护长期有效的实验室与标准器资料。" Margin="0,7,0,0" Foreground="#64748B" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -37,17 +37,17 @@
                         <TextBlock Text="保存任务时会生成一份只读快照，后续修改这里不会改变已建立任务。" Margin="0,7,0,0" Foreground="#64748B"/>
                         <Grid Margin="0,18,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="实验室名称 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="LaboratoryNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="用于校准报告中的实验室名称；正式任务必填，不影响实时采集。"/>
-                            <TextBlock Grid.Column="2" Text="实验室地址 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="LaboratoryAddressTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="用于校准报告中的实验室地址；正式任务必填，不影响实时采集。"/>
+                            <TextBlock Text="实验室名称" Style="{StaticResource FieldLabel}"/><TextBox x:Name="LaboratoryNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="用于校准报告中的实验室名称；可稍后补充。"/>
+                            <TextBlock Grid.Column="2" Text="实验室地址" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="LaboratoryAddressTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="用于校准报告中的实验室地址；可稍后补充。"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="标准器名称 *" Style="{StaticResource FieldLabel}"/><TextBox x:Name="StandardNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}"/>
-                            <TextBlock Grid.Column="2" Text="证书编号 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="CertificateNumberTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
+                            <TextBlock Text="标准器名称" Style="{StaticResource FieldLabel}"/><TextBox x:Name="StandardNameTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="可稍后补充；正式校准前必须完善。"/>
+                            <TextBlock Grid.Column="2" Text="证书编号" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="CertificateNumberTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="可稍后补充；正式校准前必须完善。"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/><ColumnDefinition Width="130"/><ColumnDefinition Width="*" MaxWidth="380"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="有效期至 *" Style="{StaticResource FieldLabel}"/><DatePicker x:Name="ValidityDatePicker" Grid.Column="1" Style="{StaticResource FieldDatePicker}"/>
+                            <TextBlock Text="有效期至" Style="{StaticResource FieldLabel}"/><DatePicker x:Name="ValidityDatePicker" Grid.Column="1" Style="{StaticResource FieldDatePicker}"/>
                             <TextBlock Grid.Column="2" Text="型号规格" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/><TextBox x:Name="ModelTextBox" Grid.Column="3" Style="{StaticResource FieldBox}"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
@@ -127,7 +127,7 @@
             <DockPanel LastChildFill="False">
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock x:Name="StatusTextBlock" Text="设置尚未保存" Foreground="#B45309" FontWeight="SemiBold"/>
-                    <TextBlock Text="保存后，新建任务将引用最新标准器资料；既有任务快照不会被自动改写。" Foreground="#64748B" FontSize="12" Margin="0,3,0,0"/>
+                    <TextBlock Text="资料可以先留空；保存任务不会丢失任务配置，开始正式校准前系统会提示补齐必需的标准器信息。" Foreground="#64748B" FontSize="12" Margin="0,3,0,0"/>
                 </StackPanel>
                 <Button x:Name="SaveSettingsButton" DockPanel.Dock="Right" Width="220" Content="保存系统资料" Click="SaveButton_Click" Padding="24,10" Background="#2563EB" Foreground="White" BorderThickness="0"/>
             </DockPanel>

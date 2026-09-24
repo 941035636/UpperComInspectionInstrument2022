@@ -1,8 +1,10 @@
 using UpperComInspectionInstrument2022.Services;
 using UpperComInspectionInstrument2022.Models;
+using UpperComInspectionInstrument2022.Communication;
 using System.Collections;
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Reflection;
 using System.Resources;
 using System.Text;
 
@@ -189,9 +191,133 @@ Assert(CalibrationTaskContext.TrySnapshotCurrentStandardSettings(1, false, out _
        CalibrationTaskContext.TryValidateReferencedStandardSettings(out _),
     "JJF1376 instrument class and thermocouple grade are frozen into the task snapshot");
 
-Assert(ChannelCorrectionService.TryParse("1:0.02,2:-0.01", 50, out Dictionary<int, double> corrections, out _), "correction parse");
+Assert(ChannelCorrectionService.TryParse("1:0.02,2:-0.01", InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out Dictionary<int, double> corrections, out _), "correction parse");
 Assert(corrections.Count == 2 && corrections[2] == -0.01, "correction values");
-Assert(!ChannelCorrectionService.TryParse("51:0.1", 50, out _, out _), "correction bounds");
+Assert(!ChannelCorrectionService.TryParse("25:0.1", InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out _, out _), "correction bounds");
+Assert(InspectionInstrumentProtocol.GetTemperatureRegisterQuantity(9) == 18,
+    "nine active temperature channels request eighteen registers");
+Assert(InspectionInstrumentProtocol.GetHumidityRegisterQuantity(3) == 6,
+    "three active humidity probes request six humidity/companion-temperature registers");
+Assert(InspectionInstrumentProtocol.CompatibleTemperatureBlockRegisterCount == 100,
+    "Qt-compatible temperature block contains one hundred registers");
+Assert(InspectionInstrumentProtocol.CompatibleHumidityBlockRegisterCount == 20,
+    "Qt-compatible humidity block contains twenty registers");
+Assert(InspectionInstrumentProtocol.SensorTypeStartAddress == 0x0146 &&
+       InspectionInstrumentProtocol.ChannelEnableStartAddress == 0x015E &&
+       InspectionInstrumentProtocol.ConfigurationModeCoilAddress == 0x0001 &&
+       InspectionInstrumentProtocol.SaveConfigurationCoilAddress == 0x0005,
+    "latest protocol channel-configuration register and coil addresses");
+Assert(InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount == 24 &&
+       InspectionInstrumentProtocol.ConfigurableEnableChannelCount == 33,
+    "current hardware exposes 24 temperature types and 33 enable states");
+string channelProfileTestRoot = Path.Combine(
+    Path.GetTempPath(),
+    "UpperComInspectionInstrument2022-channel-profile-test",
+    Guid.NewGuid().ToString("N"));
+InspectionInstrumentChannelProfileService channelProfileService = new(channelProfileTestRoot);
+bool[] expectedChannelProfile = Enumerable.Range(0, 33).Select(index => index < 10).ToArray();
+Assert(channelProfileService.TrySave("COM7", 1, expectedChannelProfile, out string channelProfileSaveError),
+    $"channel profile save: {channelProfileSaveError}");
+Assert(channelProfileService.TryLoad(
+           "com7",
+           1,
+           out bool[] loadedChannelProfile,
+           out DateTime channelProfileSavedAt,
+           out string channelProfileLoadError) &&
+       loadedChannelProfile.SequenceEqual(expectedChannelProfile) &&
+       channelProfileSavedAt != default,
+    $"channel profile load: {channelProfileLoadError}");
+Assert(!channelProfileService.TryLoad("COM8", 1, out _, out _, out string otherPortProfileError) &&
+       string.IsNullOrWhiteSpace(otherPortProfileError),
+    "channel profile must be isolated by serial port and slave address");
+Assert(!channelProfileService.TrySave(string.Empty, 1, expectedChannelProfile, out string emptyPortProfileError) &&
+       !string.IsNullOrWhiteSpace(emptyPortProfileError),
+    "channel profile must reject an empty serial port name");
+Assert(InspectionInstrumentProtocol.ConfigurationRequestIntervalMilliseconds == 250,
+    "configuration requests keep a short device processing interval without slowing the page by one second per frame");
+Assert(InspectionInstrumentProtocol.ConfigurationFallbackChunkRegisterCount == 4,
+    "configuration reads use the four-register request proven by the serial assistant");
+Assert(InspectionInstrumentProtocol.ConfigurationReadConfirmationCount == 1 &&
+       InspectionInstrumentProtocol.ConfigurationReadRoundCount >= 3,
+    "configuration blocks accept one semantically valid response and retain bounded retries for rejected or missing frames");
+Assert(InspectionInstrumentProtocol.InvalidConfigurationReadConfirmationCount == 2,
+    "out-of-range configuration values must repeat before the UI offers a controlled repair");
+Assert(InspectionInstrumentProtocol.ConfigurationControlResponseTimeoutMilliseconds <= 1000,
+    "configuration control commands do not spend multiple seconds waiting for missing coil echoes");
+Assert(InspectionInstrumentProtocol.SaveConfigurationCommitDelayMilliseconds >= 2000,
+    "configuration save leaves time for the device to commit nonvolatile settings");
+Assert(InspectionInstrumentConfigurationService.DecodeConfigurationRegister(0x0100, true) == 1 &&
+       InspectionInstrumentConfigurationService.DecodeConfigurationRegister(0x0D00, true) == 13 &&
+       InspectionInstrumentConfigurationService.DecodeConfigurationRegister(0x0001, false) == 1,
+    "device configuration registers decode both low-byte-first and standard word payloads");
+Assert(InspectionInstrumentConfigurationService.EncodeConfigurationRegister(1, true) == 0x0100 &&
+       InspectionInstrumentConfigurationService.EncodeConfigurationRegister(13, true) == 0x0D00 &&
+       InspectionInstrumentConfigurationService.EncodeConfigurationRegister(1, false) == 0x0001,
+    "device configuration writes preserve the detected register payload byte order");
+ushort mixedStandard = InspectionInstrumentConfigurationService.DecodeConfigurationRegisterAutomatically(
+    0x0001, 1, out bool mixedStandardUsesLowByteFirst);
+ushort mixedLowByteFirst = InspectionInstrumentConfigurationService.DecodeConfigurationRegisterAutomatically(
+    0x0100, 1, out bool mixedLowByteFirstUsesLowByteFirst);
+Assert(mixedStandard == 1 && !mixedStandardUsesLowByteFirst &&
+       mixedLowByteFirst == 1 && mixedLowByteFirstUsesLowByteFirst,
+    "mixed channel-enable register byte orders decode independently");
+bool rejectedDelayedMeasurementWord = false;
+try
+{
+    InspectionInstrumentConfigurationService.DecodeConfigurationRegisterAutomatically(
+        0xCDCC, 1, out _, "通道使能");
+}
+catch (InvalidOperationException)
+{
+    rejectedDelayedMeasurementWord = true;
+}
+Assert(rejectedDelayedMeasurementWord,
+    "configuration validation rejects 0xCDCC, a delayed 123.4 floating-point measurement fragment");
+
+byte[] serialAssistantConfigurationResponse =
+{
+    0x01, 0x03, 0x08, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x55, 0xA6
+};
+MethodInfo extractReadResponse = typeof(ModbusRtuClient).GetMethod(
+    "TryExtractReadResponse",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("Modbus transaction-local frame parser was not found");
+object[] parserArguments =
+{
+    new List<byte>(new byte[] { 0x7E, 0x55 }.Concat(serialAssistantConfigurationResponse)),
+    (byte)1,
+    8,
+    false,
+    Array.Empty<byte>()
+};
+bool parsedSerialAssistantFrame = (bool)(extractReadResponse.Invoke(null, parserArguments) ?? false);
+Assert(parsedSerialAssistantFrame &&
+       parserArguments[4] is byte[] extractedConfigurationResponse &&
+       extractedConfigurationResponse.SequenceEqual(serialAssistantConfigurationResponse),
+    "transaction-local parser accepts the exact four-register response captured by the serial assistant");
+
+Assert(InspectionInstrumentProtocol.AcquisitionRunningStateCoilAddress == 0x0000 &&
+       InspectionInstrumentProtocol.StartAcquisitionCoilAddress == 0x0010 &&
+       InspectionInstrumentProtocol.StopAcquisitionCoilAddress == 0x0011,
+    "inspection instrument run-state and start-stop coils match the latest protocol");
+byte[] runningCoilResponse = { 0x01, 0x01, 0x01, 0x01, 0x90, 0x48 };
+MethodInfo extractBitReadResponse = typeof(ModbusRtuClient).GetMethod(
+    "TryExtractBitReadResponse",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("Modbus coil transaction parser was not found");
+object[] bitParserArguments =
+{
+    new List<byte>(new byte[] { 0x7E }.Concat(runningCoilResponse)),
+    (byte)1,
+    1,
+    false,
+    Array.Empty<byte>()
+};
+bool parsedRunningCoilFrame = (bool)(extractBitReadResponse.Invoke(null, bitParserArguments) ?? false);
+Assert(parsedRunningCoilFrame &&
+       bitParserArguments[4] is byte[] extractedRunningCoilResponse &&
+       extractedRunningCoilResponse.SequenceEqual(runningCoilResponse),
+    "transaction-local parser accepts a valid running-state coil response");
 
 Assert(Math.Abs(InspectionMeterService.DecodeFloatBigEndian(new byte[] { 0x42, 0xF6, 0xCC, 0xCD }) - 123.4) < 0.0001,
     "protocol float byte order");
@@ -199,6 +325,10 @@ Assert(InspectionMeterService.DecodeSignedHundredths(0x9CFF) == -1.0, "little-en
 Assert(InspectionMeterService.DecodeSignedHundredths(0xAC02) == 6.84, "field humidity register byte order");
 Assert(InspectionMeterService.DecodeSignedHundredths(0x00FF) == -2.56,
     "negative humidity must retain its sign after the register-byte swap");
+Assert(InspectionMeterService.DecodeSignedHundredths(0x7BFE) == -3.89,
+    "negative humidity in the device byte order must retain its sign");
+Assert(InspectionMeterService.DecodeSignedHundredths(0xFE7B) == -3.89,
+    "negative humidity in standard byte order must retain its sign");
 
 var primaryTemperature = new InspectionChannelData
 {
@@ -678,6 +808,18 @@ blockingReader.AllowReadToReturn.Set();
 await lifecycleService.StopAsync();
 Assert(!lifecycleService.IsRunning, "stopped acquisition loop fully exits");
 
+// 暂停边界回归：取消信号发出后，正在进行的同步串口读取即使以超时结束，
+// 也属于正常停止收尾，StopAsync 不得向界面传播该超时异常。
+CancelDuringFailureMeasurementReader cancelDuringFailureReader = new();
+InspectionDataAcquisitionService cancelDuringFailureService = new(cancelDuringFailureReader);
+Assert(cancelDuringFailureService.Start(1, 200, "温度"), "cancel-during-read acquisition starts");
+Assert(cancelDuringFailureReader.ReadEntered.Wait(TimeSpan.FromSeconds(2)), "cancel-during-read enters device request");
+Task gracefulStopTask = cancelDuringFailureService.StopAsync();
+cancelDuringFailureReader.AllowFailure.Set();
+await gracefulStopTask.WaitAsync(TimeSpan.FromSeconds(2));
+Assert(!cancelDuringFailureService.IsRunning,
+    "timeout produced after operator cancellation is absorbed as a normal stop");
+
 TaskCompletionSource<bool> restartedData = new(TaskCreationOptions.RunContinuationsAsynchronously);
 lifecycleService.DataAcquired += (_, _) => restartedData.TrySetResult(true);
 Assert(lifecycleService.Start(1, 200, "温度"), "acquisition can restart after the old loop exits");
@@ -696,8 +838,10 @@ intervalService.DataAcquired += (_, _) =>
     if (count == 1) firstIntervalResponse.TrySetResult(true);
     if (count == 2) secondIntervalResponse.TrySetResult(true);
 };
-Assert(intervalService.Start(1, 10000, "温度"), "long-interval acquisition starts");
+Assert(intervalService.Start(1, 10000, "温度", 9, 0), "long-interval acquisition starts");
 await firstIntervalResponse.Task.WaitAsync(TimeSpan.FromSeconds(2));
+Assert(intervalReader.LastTemperatureChannelCount == 9 && intervalReader.LastHumidityChannelCount == 0,
+    "acquisition forwards the task channel counts to the protocol reader");
 Stopwatch intervalAdjustmentWatch = Stopwatch.StartNew();
 Assert(intervalService.TryUpdateInterval(200) && intervalService.CurrentIntervalMilliseconds == 200,
     "running acquisition accepts the shorter formal-sampling interval");
@@ -709,24 +853,26 @@ Assert(intervalService.TryUpdateInterval(10000) && intervalService.CurrentInterv
     "original realtime interval can be restored after formal sampling");
 await intervalService.StopAsync();
 
-// 通信退避回归：连续错误按 1 s、2 s、3 s 递增，并在第三次后自动停止，不能无限轰击设备。
+// 通信退避回归：连续错误按 1 s、2 s、3 s、4 s 递增，超过告警阈值后仍保持串口循环，等待设备自行恢复。
 AlwaysFailMeasurementReader failingReader = new();
 InspectionDataAcquisitionService retryService = new(failingReader);
 List<(int Count, int Delay)> observedFailures = new();
-TaskCompletionSource<bool> failureLimitReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+TaskCompletionSource<bool> continuedAfterWarningThreshold = new(TaskCreationOptions.RunContinuationsAsynchronously);
 retryService.AcquisitionError += _ =>
 {
     observedFailures.Add((retryService.ConsecutiveFailureCount, retryService.NextRetryDelayMilliseconds));
-    if (retryService.ConsecutiveFailureCount >= retryService.MaxConsecutiveFailures)
-        failureLimitReached.TrySetResult(true);
+    if (retryService.ConsecutiveFailureCount > retryService.PersistentWarningFailureCount)
+        continuedAfterWarningThreshold.TrySetResult(true);
 };
 Assert(retryService.Start(1, 200, "温度"), "retry acquisition loop starts");
-await failureLimitReached.Task.WaitAsync(TimeSpan.FromSeconds(6));
+await continuedAfterWarningThreshold.Task.WaitAsync(TimeSpan.FromSeconds(8));
+Assert(retryService.IsRunning && failingReader.ReadCount >= 4,
+    "communication warning threshold keeps the request loop and serial session alive");
 await retryService.StopAsync();
-Assert(observedFailures.SequenceEqual(new[] { (1, 1000), (2, 2000), (3, 3000) }),
-    "communication failures use bounded backoff and stop at the configured limit");
-Assert(!retryService.IsRunning && failingReader.ReadCount == 3,
-    "failure limit stops the request loop without an unbounded fourth read");
+Assert(observedFailures.Take(4).SequenceEqual(new[] { (1, 1000), (2, 2000), (3, 3000), (4, 4000) }),
+    "communication failures use bounded backoff while persistent retry remains active");
+Assert(!retryService.IsRunning,
+    "persistent retry loop still stops promptly when the operator explicitly requests stop");
 
 // 本地追溯回归：运行日志和业务操作记录都必须是带 BOM、可由办公软件直接打开的 CSV。
 string traceRoot = Path.Combine(storageTestRoot, "trace-check");
@@ -776,6 +922,31 @@ string recoveredRealtimeSummary = File.ReadAllText(Path.Combine(abandonedRealtim
 Assert(recoveredRealtimeSummary.Contains("\"已中断\"") && recoveredRealtimeSummary.Contains("上次未正常结束"),
     "realtime recovery marks summary interrupted and keeps recorded data");
 
+List<int> normalizedTemperatureMapping = MeasurementChannelMappingService.Normalize(
+    new[] { 7, 2, 7, 30 }, 4, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+Assert(normalizedTemperatureMapping.SequenceEqual(new[] { 7, 2, 1, 3 }),
+    "channel mapping repairs duplicate and out-of-range physical channels deterministically");
+Assert(MeasurementChannelMappingService.GetRequiredReadChannelCount(
+           new[] { 7, 2 }, 2, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount) == 7,
+    "sparse mapping reads one contiguous block through the highest physical channel");
+
+List<InspectionChannelData> physicalMappedSource = new()
+{
+    new() { Channel = 2, PhysicalChannel = 2, Role = ChannelRole.PrimaryTemperature, Type = ChannelType.Temperature, Value = 20.2, IsValid = true },
+    new() { Channel = 7, PhysicalChannel = 7, Role = ChannelRole.PrimaryTemperature, Type = ChannelType.Temperature, Value = 20.7, IsValid = true },
+    new() { Channel = 3, PhysicalChannel = 3, Role = ChannelRole.Humidity, Type = ChannelType.Humidity, Value = 50.3, IsValid = true },
+    new() { Channel = 3, PhysicalChannel = 3, Role = ChannelRole.HumidityProbeTemperature, Type = ChannelType.Temperature, Value = 19.3, IsValid = true }
+};
+ChannelCorrectionService.Apply(physicalMappedSource, "7:0.5", "3:-0.2");
+List<InspectionChannelData> logicalMapped = MeasurementChannelMappingService.ApplyTaskMapping(
+    physicalMappedSource, new[] { 7, 2 }, new[] { 3 });
+Assert(logicalMapped.Single(item => item.Role == ChannelRole.PrimaryTemperature && item.Channel == 1).Value == 21.2 &&
+       logicalMapped.Single(item => item.Role == ChannelRole.PrimaryTemperature && item.Channel == 1).PhysicalChannel == 7 &&
+       logicalMapped.Single(item => item.Role == ChannelRole.PrimaryTemperature && item.Channel == 2).Value == 20.2 &&
+       Math.Abs(logicalMapped.Single(item => item.Role == ChannelRole.Humidity && item.Channel == 1).Value - 50.1) < 0.000001 &&
+       logicalMapped.Single(item => item.Role == ChannelRole.HumidityProbeTemperature && item.Channel == 1).PhysicalChannel == 3,
+    "corrections use physical channels before logical point projection and probe temperature follows humidity mapping");
+
 Console.WriteLine($"PASS: protocol, standards, formulas, formal/realtime archives, reports, acquisition lifecycle, CSV traces and startup recovery; test archive: {storageJobDirectory}");
 
 /// <summary>用于验证“同步设备读尚未返回”场景的可控读取器。</summary>
@@ -784,7 +955,12 @@ sealed class BlockingMeasurementReader : IInspectionMeasurementReader
     public ManualResetEventSlim ReadEntered { get; } = new(false);
     public ManualResetEventSlim AllowReadToReturn { get; } = new(false);
 
-    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    public List<InspectionChannelData> ReadMeasurements(
+        string calibrationType,
+        byte slaveAddress,
+        long acquisitionId,
+        int temperatureChannelCount,
+        int humidityChannelCount)
     {
         ReadEntered.Set();
         if (!AllowReadToReturn.Wait(TimeSpan.FromSeconds(5)))
@@ -796,11 +972,41 @@ sealed class BlockingMeasurementReader : IInspectionMeasurementReader
     }
 }
 
+/// <summary>模拟“操作人员点击暂停后，尚未结束的串口读取才返回超时”。</summary>
+sealed class CancelDuringFailureMeasurementReader : IInspectionMeasurementReader
+{
+    public ManualResetEventSlim ReadEntered { get; } = new(false);
+    public ManualResetEventSlim AllowFailure { get; } = new(false);
+
+    public List<InspectionChannelData> ReadMeasurements(
+        string calibrationType,
+        byte slaveAddress,
+        long acquisitionId,
+        int temperatureChannelCount,
+        int humidityChannelCount)
+    {
+        ReadEntered.Set();
+        if (!AllowFailure.Wait(TimeSpan.FromSeconds(5)))
+            throw new TimeoutException("自动检查未释放模拟设备读操作。");
+        throw new TimeoutException("模拟暂停期间到达的巡检仪读取超时。");
+    }
+}
+
 /// <summary>用于验证运行中动态调整轮询周期的立即成功读取器。</summary>
 sealed class ImmediateMeasurementReader : IInspectionMeasurementReader
 {
-    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    public int LastTemperatureChannelCount { get; private set; }
+    public int LastHumidityChannelCount { get; private set; }
+
+    public List<InspectionChannelData> ReadMeasurements(
+        string calibrationType,
+        byte slaveAddress,
+        long acquisitionId,
+        int temperatureChannelCount,
+        int humidityChannelCount)
     {
+        LastTemperatureChannelCount = temperatureChannelCount;
+        LastHumidityChannelCount = humidityChannelCount;
         return new List<InspectionChannelData>
         {
             new() { Channel = 1, Type = ChannelType.Temperature, Value = 20, IsValid = true }
@@ -813,7 +1019,12 @@ sealed class AlwaysFailMeasurementReader : IInspectionMeasurementReader
 {
     public int ReadCount { get; private set; }
 
-    public List<InspectionChannelData> ReadMeasurements(string calibrationType, byte slaveAddress, long acquisitionId)
+    public List<InspectionChannelData> ReadMeasurements(
+        string calibrationType,
+        byte slaveAddress,
+        long acquisitionId,
+        int temperatureChannelCount,
+        int humidityChannelCount)
     {
         ReadCount++;
         throw new TimeoutException("模拟巡检仪无响应。");

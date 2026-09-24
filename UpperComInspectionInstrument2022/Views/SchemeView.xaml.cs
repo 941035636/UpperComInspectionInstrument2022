@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 using UpperComInspectionInstrument2022.Services;
 
@@ -16,6 +18,8 @@ namespace UpperComInspectionInstrument2022.Views
     public partial class SchemeView : Page
     {
         private bool _loading;
+        private List<int> _temperatureChannelMapping = new();
+        private List<int> _humidityChannelMapping = new();
 
         /// <summary>任务配置页当前选择的规范索引，供系统设置页自动绑定使用。</summary>
         public int SelectedStandardIndex => Math.Clamp(StandardComboBox.SelectedIndex, 0, 1);
@@ -37,6 +41,7 @@ namespace UpperComInspectionInstrument2022.Views
             PointSelectionComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.PointSelectionIndex, 0, 1);
             PointLayoutModeComboBox.SelectedIndex = Math.Clamp(
                 CalibrationTaskContext.PointLayoutModeIndex, 0, Math.Max(0, PointLayoutModeComboBox.Items.Count - 1));
+            SamplingPlanModeComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.SamplingPlanModeIndex, 0, 1);
             LoadConditionComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.LoadConditionIndex, 0, 1);
             StabilityBasisComboBox.SelectedIndex = StandardComboBox.SelectedIndex == 1
                 ? 0
@@ -47,9 +52,13 @@ namespace UpperComInspectionInstrument2022.Views
                                                CalibrationTaskContext.SensorTypeIndex < SensorTypeComboBox.Items.Count
                 ? CalibrationTaskContext.SensorTypeIndex
                 : -1;
+            _temperatureChannelMapping = new List<int>(CalibrationTaskContext.TemperatureChannelMapping);
+            _humidityChannelMapping = new List<int>(CalibrationTaskContext.HumidityChannelMapping);
             LoadTaskValues();
+            UpdateChannelMappingSummary();
             _loading = false;
-            ApplyRule(PointLayoutModeComboBox.SelectedIndex == 0);
+            // 已保存任务必须保留任务快照；只有新建任务才应用规范默认值。
+            ApplyRule(!CalibrationTaskContext.IsConfigured);
             UpdateReferencedSettings();
         }
 
@@ -99,6 +108,7 @@ namespace UpperComInspectionInstrument2022.Views
             if (_loading || StandardComboBox.SelectedIndex < 0) return;
             _loading = true;
             ConfigureStandardChoices(StandardComboBox.SelectedIndex, true);
+            SamplingPlanModeComboBox.SelectedIndex = 0;
             _loading = false;
             ApplyRule(true);
         }
@@ -166,6 +176,19 @@ namespace UpperComInspectionInstrument2022.Views
             if (!_loading) ApplyRule(true);
         }
 
+        /// <summary>
+        /// 切换正式采样计划。规范模式立即恢复规范默认值并锁定输入；自定义模式保留当前值供用户调整。
+        /// </summary>
+        private void SamplingPlanModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_loading || StandardComboBox.SelectedIndex < 0) return;
+            bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
+            int volumeIndex = VolumeComboBox.SelectedIndex >= 0 ? VolumeComboBox.SelectedIndex : 0;
+            CalibrationStandardRule rule = CalibrationStandardRuleService.GetRule(
+                StandardComboBox.SelectedIndex, volumeIndex, includesHumidity);
+            UpdateSamplingPlanControls(rule, SamplingPlanModeComboBox.SelectedIndex == 0);
+        }
+
         /// <summary>校准点来源变化后只更新方案说明，不覆盖用户已经填写的执行参数。</summary>
         private void PointSelectionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -193,7 +216,6 @@ namespace UpperComInspectionInstrument2022.Views
             if (StandardComboBox.SelectedIndex < 0 || CalibrationTypeComboBox.SelectedIndex < 0) return;
             bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
             bool isJjf1101 = StandardComboBox.SelectedIndex == 0;
-            UpdateSamplingPlanControls(isJjf1101);
             MeasurementRangeLabel.Text = "使用/测量范围（可选）";
             WorkZoneDimensionLabel.Text = !isJjf1101
                 ? "测温区尺寸 (mm) *"
@@ -230,11 +252,10 @@ namespace UpperComInspectionInstrument2022.Views
                     HumidityPointCountTextBox.Text = includesHumidity ? string.Empty : "0";
                     TemperatureCenterPointTextBox.Text = string.Empty;
                     HumidityCenterPointTextBox.Text = includesHumidity ? string.Empty : "0";
-                    PlannedCountTextBox.Text = pendingRule.SampleCount.ToString();
-                    SamplingIntervalTextBox.Text = pendingRule.SampleIntervalSeconds.ToString();
                     StableWaitTextBox.Text = pendingRule.StableWaitMinutes.ToString();
                     PointLayoutDescriptionTextBox.Text = string.Empty;
                 }
+                UpdateSamplingPlanControls(pendingRule, applyDefaults && SamplingPlanModeComboBox.SelectedIndex == 0);
                 RuleScopeTextBlock.Text = $"{pendingRule.ScopeText}\n{pendingRule.EnvironmentRuleText}";
                 RulePlanTextBlock.Text = $"校准点方案：{CalibrationStandardRuleService.GetCalibrationPointRuleText(pendingRule, PointSelectionComboBox.SelectedIndex)}\n请先选择实际容积，软件再生成空间测点数量、中心点和布点说明。";
                 RuleStabilityTextBlock.Text = $"{pendingRule.StabilityRuleText}\n输出：{pendingRule.ResultItemsText}";
@@ -243,10 +264,9 @@ namespace UpperComInspectionInstrument2022.Views
                 TemperatureCenterPointTextBox.IsReadOnly = true;
                 HumidityCenterPointTextBox.IsReadOnly = true;
                 PointLayoutDescriptionTextBox.IsReadOnly = true;
-                PlannedCountTextBox.IsReadOnly = false;
-                SamplingIntervalTextBox.IsReadOnly = false;
                 UpdateStabilityControls();
                 UpdateReferencedSettings();
+                UpdateChannelMappingSummary();
                 return;
             }
 
@@ -259,10 +279,9 @@ namespace UpperComInspectionInstrument2022.Views
                 HumidityPointCountTextBox.Text = rule.HumidityPointCount.ToString();
                 TemperatureCenterPointTextBox.Text = rule.TemperatureCenterPoint.ToString();
                 HumidityCenterPointTextBox.Text = Math.Max(1, rule.HumidityCenterPoint).ToString();
-                PlannedCountTextBox.Text = rule.SampleCount.ToString();
-                SamplingIntervalTextBox.Text = rule.SampleIntervalSeconds.ToString();
                 StableWaitTextBox.Text = rule.StableWaitMinutes.ToString();
             }
+            UpdateSamplingPlanControls(rule, applyDefaults && SamplingPlanModeComboBox.SelectedIndex == 0);
             if (applyDefaults || !rule.SupportsCustomPointLayout)
                 PointLayoutDescriptionTextBox.Text = selectedLayoutText;
 
@@ -278,31 +297,100 @@ namespace UpperComInspectionInstrument2022.Views
             // O 是规范中的空间位置；它映射到巡检仪哪个湿度通道取决于现场接线，始终允许确认/修改。
             HumidityCenterPointTextBox.IsReadOnly = false;
             PointLayoutDescriptionTextBox.IsReadOnly = !customPointInput;
-            PlannedCountTextBox.IsReadOnly = false;
-            SamplingIntervalTextBox.IsReadOnly = false;
             LoadDescriptionTextBox.IsEnabled = LoadConditionComboBox.SelectedIndex == 1;
             UpdateStabilityControls();
             UpdateReferencedSettings();
+            UpdateChannelMappingSummary();
+        }
+
+        /// <summary>打开逻辑测点与物理接口绑定窗口；绑定只保存在当前任务中，不直接改写巡检仪。</summary>
+        private void ConfigureChannelMappingButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryParseInt(TemperaturePointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int temperatureCount))
+            {
+                ShowInputError("请先填写有效的温度空间测点数。", TemperaturePointCountTextBox);
+                return;
+            }
+
+            int humidityCount = 0;
+            bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
+            if (includesHumidity &&
+                !TryParseInt(HumidityPointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out humidityCount))
+            {
+                ShowInputError("请先填写有效的湿度空间测点数。", HumidityPointCountTextBox);
+                return;
+            }
+
+            ChannelMappingWindow window = new(
+                temperatureCount,
+                humidityCount,
+                _temperatureChannelMapping,
+                _humidityChannelMapping)
+            {
+                Owner = Window.GetWindow(this)
+            };
+            if (window.ShowDialog() != true) return;
+
+            _temperatureChannelMapping = window.TemperatureMapping.ToList();
+            _humidityChannelMapping = window.HumidityMapping.ToList();
+            UpdateChannelMappingSummary();
+            TaskStatusTextBlock.Text = "通道绑定已修改，保存任务后生效";
+            TaskStatusTextBlock.Foreground = Brushes.DarkOrange;
+        }
+
+        /// <summary>按页面当前点数修复映射并显示紧凑摘要。</summary>
+        private void UpdateChannelMappingSummary()
+        {
+            if (ChannelMappingSummaryTextBlock == null) return;
+            int temperatureCount = int.TryParse(TemperaturePointCountTextBox.Text, out int parsedTemperature)
+                ? Math.Clamp(parsedTemperature, 0, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount)
+                : 0;
+            bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
+            int humidityCount = includesHumidity && int.TryParse(HumidityPointCountTextBox.Text, out int parsedHumidity)
+                ? Math.Clamp(parsedHumidity, 0, InspectionInstrumentProtocol.PhysicalHumidityChannelCount)
+                : 0;
+            _temperatureChannelMapping = MeasurementChannelMappingService.Normalize(
+                _temperatureChannelMapping, temperatureCount, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+            _humidityChannelMapping = MeasurementChannelMappingService.Normalize(
+                _humidityChannelMapping, humidityCount, InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
+            string summary = MeasurementChannelMappingService.FormatSummary(_temperatureChannelMapping, _humidityChannelMapping);
+            ChannelMappingSummaryTextBlock.Text = string.IsNullOrWhiteSpace(summary) ? "请先选择规范、容积和测点数" : summary;
         }
 
         /// <summary>
         /// 根据所选规范说明正式采样计划的默认值和可调整方式。
         /// </summary>
-        private void UpdateSamplingPlanControls(bool isJjf1101)
+        private void UpdateSamplingPlanControls(CalibrationStandardRule rule, bool applyDefaults)
         {
+            bool isJjf1101 = StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1101Index;
+            bool usesNormativePlan = SamplingPlanModeComboBox.SelectedIndex != 1;
+            if (applyDefaults)
+            {
+                PlannedCountTextBox.Text = rule.SampleCount.ToString();
+                SamplingIntervalTextBox.Text = rule.SampleIntervalSeconds.ToString();
+            }
+
+            PlannedCountTextBox.IsReadOnly = usesNormativePlan;
+            SamplingIntervalTextBox.IsReadOnly = usesNormativePlan;
             if (isJjf1101)
             {
                 PlannedCountLabel.Text = "正式样本数 *";
                 SamplingIntervalLabel.Text = "正式采样间隔 (s) *";
-                PlannedCountTextBox.ToolTip = "正式校准阶段需要保存的完整样本组数。";
-                SamplingIntervalTextBox.ToolTip = "相邻两组正式样本的时间间隔，单位为秒。";
+                PlannedCountTextBox.ToolTip = usesNormativePlan ? "JJF 1101 规范计划为 16 组。" : "按设备运行状况或用户需求填写正式样本组数。";
+                SamplingIntervalTextBox.ToolTip = usesNormativePlan ? "JJF 1101 规范计划为每 120 秒记录一组。" : "按设备运行状况或用户需求填写，单位为秒。";
+                SamplingPlanHintTextBlock.Text = usesNormativePlan
+                    ? "JJF 1101：每 2 min 记录一次，30 min 共 16 组。"
+                    : "调整时间间隔或记录次数后，须在偏离/自定义说明中记录设备运行状况或用户需求。";
                 return;
             }
 
             PlannedCountLabel.Text = "正式样本数（≥20）*";
             SamplingIntervalLabel.Text = "正式采样间隔 (s) *";
-            PlannedCountTextBox.ToolTip = "JJF 1376 默认至少 20 组；自定义计划仍不得少于 20 组。";
-            SamplingIntervalTextBox.ToolTip = "默认 180 s，可按现场要求修改；偏离规范默认计划时必须填写偏离/自定义说明。";
+            PlannedCountTextBox.ToolTip = usesNormativePlan ? "JJF 1376 规范计划为 20 组。" : "自定义计划仍不得少于 20 组。";
+            SamplingIntervalTextBox.ToolTip = usesNormativePlan ? "JJF 1376 规范计划为每 180 秒记录一组。" : "自定义间隔必须在偏离/自定义说明中记录。";
+            SamplingPlanHintTextBlock.Text = usesNormativePlan
+                ? "JJF 1376：60 min 内每隔 3 min 记录一次，至少 20 次。"
+                : "自定义计划不得少于 20 组，并须记录现场要求、原因和依据。";
         }
 
         /// <summary>按当前规范、设备容积或箱式炉布点模式打开对应的规范布点图。</summary>
@@ -450,8 +538,8 @@ namespace UpperComInspectionInstrument2022.Views
                 return;
             }
 
-            if (!TryParseInt(TemperaturePointCountTextBox.Text, 1, 50, out int temperatureCount) ||
-                !TryParseInt(HumidityPointCountTextBox.Text, 0, 10, out int humidityCount) ||
+            if (!TryParseInt(TemperaturePointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int temperatureCount) ||
+                !TryParseInt(HumidityPointCountTextBox.Text, 0, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out int humidityCount) ||
                 !TryParseInt(TemperatureCenterPointTextBox.Text, 1, temperatureCount, out int temperatureCenter) ||
                 (includesHumidity && !TryParseInt(HumidityCenterPointTextBox.Text, 1, humidityCount, out _)) ||
                 !TryParseInt(PlannedCountTextBox.Text, 1, 10000, out int plannedCount) ||
@@ -533,6 +621,13 @@ namespace UpperComInspectionInstrument2022.Views
                 ShowInputError("负载校准必须说明负载情况。", LoadDescriptionTextBox);
                 return;
             }
+            if (SamplingPlanModeComboBox.SelectedIndex == 0 &&
+                (plannedCount != rule.SampleCount || samplingInterval != rule.SampleIntervalSeconds))
+            {
+                MessageBox.Show("按规范采样计划时，样本数和采样间隔必须使用规范默认值；如需调整，请切换为自定义采样计划。",
+                    "采样计划不一致", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             if (StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index && plannedCount < 20)
             {
                 ShowInputError("JJF 1376 正式样本数不得少于 20 组。", PlannedCountTextBox);
@@ -566,16 +661,16 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show("请先确认现场不存在规范禁止的环境干扰。", "现场条件未确认", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (!CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
-                    StandardComboBox.SelectedIndex, includesHumidity, out string standardSettingsError))
-            {
-                MessageBox.Show($"{standardSettingsError}\n\n请先维护标准器资料，再保存校准任务。", "标准器资料不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
             SaveTask(rule, includesHumidity, setTemperature, setHumidity, temperatureCount, humidityCount, temperatureCenter,
                 humidityCenter, plannedCount, samplingInterval, stableWait, dutTemperatureResolution, dutHumidityResolution,
                 ambientTemperature, ambientHumidity, ambientPressure);
+            // 任务配置与标准器维护解耦：先保存任务，标准器资料允许稍后补充。
+            // 完整资料仍会在正式校准启动前强制校验，避免不完整信息进入正式报告。
+            bool standardSettingsCaptured = CalibrationTaskContext.TrySnapshotCurrentStandardSettings(
+                StandardComboBox.SelectedIndex, includesHumidity, out string standardSettingsError);
+            if (!standardSettingsCaptured)
+                CalibrationTaskContext.ClearReferencedStandardSettings();
+            CalibrationTaskContext.Save();
             string standard = StandardComboBox.SelectedIndex == 1 ? "JJF 1376-2012" : "JJF 1101-2019";
             LocalTraceService.Default.TryWriteOperation(
                 "保存校准任务",
@@ -585,7 +680,9 @@ namespace UpperComInspectionInstrument2022.Views
                 string.Empty,
                 out _);
             TaskStatusTextBlock.Text = "任务已保存，标准器资料和规范规则已固化";
-            TaskStatusTextBlock.Foreground = Brushes.DarkGreen;
+            if (!standardSettingsCaptured)
+                TaskStatusTextBlock.Text = "任务已保存，标准器资料暂未完整；正式校准前请到系统设置补充。";
+            TaskStatusTextBlock.Foreground = standardSettingsCaptured ? Brushes.DarkGreen : Brushes.DarkOrange;
             if (Application.Current.MainWindow is MainWindow mainWindow) mainWindow.ShowRealTimeMeasurementPage();
         }
 
@@ -603,6 +700,7 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.SensorTypeCode = TemperatureSensorCatalog.GetCode(SensorTypeComboBox.SelectedIndex);
             CalibrationTaskContext.PointSelectionIndex = PointSelectionComboBox.SelectedIndex;
             CalibrationTaskContext.PointLayoutModeIndex = PointLayoutModeComboBox.SelectedIndex;
+            CalibrationTaskContext.SamplingPlanModeIndex = SamplingPlanModeComboBox.SelectedIndex;
             CalibrationTaskContext.LoadConditionIndex = LoadConditionComboBox.SelectedIndex;
             CalibrationTaskContext.StabilityBasisIndex = StandardComboBox.SelectedIndex == 1 ? 0 : StabilityBasisComboBox.SelectedIndex;
             CalibrationTaskContext.AppearanceCheckIndex = AppearanceCheckComboBox.SelectedIndex;
@@ -610,6 +708,10 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.HumidityPointCount = includesHumidity ? humidityCount : 0;
             CalibrationTaskContext.TemperatureCenterPoint = temperatureCenter;
             CalibrationTaskContext.HumidityCenterPoint = includesHumidity ? humidityCenter : 0;
+            CalibrationTaskContext.TemperatureChannelMapping = MeasurementChannelMappingService.Normalize(
+                _temperatureChannelMapping, temperatureCount, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
+            CalibrationTaskContext.HumidityChannelMapping = MeasurementChannelMappingService.Normalize(
+                _humidityChannelMapping, includesHumidity ? humidityCount : 0, InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
             CalibrationTaskContext.PlannedCount = plannedCount;
             CalibrationTaskContext.SamplingIntervalSeconds = samplingInterval;
             CalibrationTaskContext.StableWaitMinutes = stableWait;
