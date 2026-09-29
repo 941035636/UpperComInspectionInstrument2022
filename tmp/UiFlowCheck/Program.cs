@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
+using UpperComInspectionInstrument2022.Services;
 using UpperComInspectionInstrument2022.Views;
 
 namespace UiFlowCheck;
@@ -29,8 +30,8 @@ internal static class Program
         ComboBox volume = Find<ComboBox>(taskPage, "VolumeComboBox");
         ComboBox layout = Find<ComboBox>(taskPage, "PointLayoutModeComboBox");
         ComboBox samplingPlanMode = Find<ComboBox>(taskPage, "SamplingPlanModeComboBox");
-        TextBox temperatureCount = Find<TextBox>(taskPage, "TemperaturePointCountTextBox");
-        TextBox humidityCount = Find<TextBox>(taskPage, "HumidityPointCountTextBox");
+        ComboBox temperatureCount = Find<ComboBox>(taskPage, "TemperaturePointCountComboBox");
+        ComboBox humidityCount = Find<ComboBox>(taskPage, "HumidityPointCountComboBox");
         TextBox temperatureCenter = Find<TextBox>(taskPage, "TemperatureCenterPointTextBox");
         TextBox humidityCenter = Find<TextBox>(taskPage, "HumidityCenterPointTextBox");
         TextBox plannedCount = Find<TextBox>(taskPage, "PlannedCountTextBox");
@@ -41,8 +42,18 @@ internal static class Program
         Button saveTaskButton = Find<Button>(taskPage, "SaveTaskButton");
         TextBlock channelMappingSummary = Find<TextBlock>(taskPage, "ChannelMappingSummaryTextBlock");
         Expander optionalArchive = Find<Expander>(taskPage, "OptionalArchiveExpander");
+        ScrollViewer taskScrollViewer = Find<ScrollViewer>(taskPage, "TaskScrollViewer");
 
         Assert(!optionalArchive.IsExpanded, "optional device/customer archive should be collapsed by default");
+        Assert(taskScrollViewer.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "task validation should have a named scroll host for error-field navigation");
+        string taskPageCode = File.ReadAllText(Path.Combine("UpperComInspectionInstrument2022", "Views", "SchemeView.xaml.cs"));
+        Assert(taskPageCode.Contains("ShowInputErrors(", StringComparison.Ordinal) &&
+               taskPageCode.Contains("first.BringIntoView", StringComparison.Ordinal) &&
+               taskPageCode.Contains("Color.FromRgb(220, 38, 38)", StringComparison.Ordinal) &&
+               taskPageCode.Contains("ClearAllInputErrors();", StringComparison.Ordinal) &&
+               taskPageCode.Contains("invalidTaskFields.Select(item => item.Control)", StringComparison.Ordinal),
+            "incomplete task parameters should be marked together, scrolled into view and cleared after editing");
         Assert(taskPage.FindName("CalibrationDateTextBox") == null && taskPage.FindName("CalibrationDatePicker") == null,
             "task page should not expose the system-generated calibration date");
         Assert(saveTaskButton.Width == 260 && DockPanel.GetDock(saveTaskButton) == Dock.Right &&
@@ -53,7 +64,9 @@ internal static class Program
         TextBox measurementRange = Find<TextBox>(taskPage, "MeasurementRangeTextBox");
         Assert(measurementRange.Parent is Grid rangeGrid && rangeGrid.ColumnDefinitions[1].MaxWidth == 420,
             "measurement range should use a bounded field width instead of stretching across the card");
-        Assert(volume.SelectedIndex == -1 && temperatureCount.Text.Length == 0 && temperatureCount.IsReadOnly,
+        Assert(volume.SelectedIndex == -1 && temperatureCount.SelectedIndex == -1 && !temperatureCount.IsEnabled &&
+               temperatureCount.Items.Count == InspectionInstrumentProtocol.PhysicalTemperatureChannelCount &&
+               humidityCount.Items.Count == InspectionInstrumentProtocol.PhysicalHumidityChannelCount,
             "task page should require an explicit volume before deriving point layout");
         Assert(samplingPlanMode.SelectedIndex == 0 && plannedCount.IsReadOnly && samplingInterval.IsReadOnly,
             "new tasks should use a locked normative sampling plan");
@@ -61,22 +74,32 @@ internal static class Program
             "JJF1101 should expose its layout figures before volume selection");
 
         volume.SelectedIndex = 0;
-        Assert(temperatureCount.Text == "9" && temperatureCenter.Text == "5" && plannedCount.Text == "16" && samplingInterval.Text == "120",
+        Assert(Equals(temperatureCount.SelectedItem, 9) && !temperatureCount.IsEnabled &&
+               temperatureCenter.Text == "5" && plannedCount.Text == "16" && samplingInterval.Text == "120",
             "JJF1101 <=2m3 linkage");
-        Assert(channelMappingSummary.Text.Contains("T1→CH1", StringComparison.Ordinal),
-            "new tasks should expose an explicit identity mapping that can be edited");
+        Assert(channelMappingSummary.Text.Contains("T1→CH1", StringComparison.Ordinal) &&
+               channelMappingSummary.Text.Contains("校准工作台", StringComparison.Ordinal),
+            "task page should show the default mapping and direct physical-interface editing to the workbench");
         Assert(Equals(figureButton.Content, "查看图 1"), "JJF1101 <=2m3 should link to figure 1");
         calibrationType.SelectedIndex = 1;
-        Assert(humidityCount.Visibility == Visibility.Visible && humidityCount.Text == "3" && humidityCenter.Text == "3",
+        Assert(humidityCount.Visibility == Visibility.Visible && Equals(humidityCount.SelectedItem, 3) &&
+               !humidityCount.IsEnabled && humidityCenter.Text == "3",
             "JJF1101 humidity linkage and O-channel default");
         volume.SelectedIndex = 1;
-        Assert(temperatureCount.Text == "15" && humidityCount.Text == "4" && temperatureCenter.Text == "15" && humidityCenter.Text == "4",
+        Assert(Equals(temperatureCount.SelectedItem, 15) && Equals(humidityCount.SelectedItem, 4) &&
+               temperatureCenter.Text == "15" && humidityCenter.Text == "4",
             "JJF1101 >2m3 linkage");
         Assert(Equals(figureButton.Content, "查看图 2"), "JJF1101 >2m3 should link to figure 2");
         VerifyJjf1101LayoutFigureDialog();
         layout.SelectedIndex = 1;
-        Assert(!temperatureCount.IsReadOnly && !humidityCount.IsReadOnly && !temperatureCenter.IsReadOnly,
+        Assert(temperatureCount.IsEnabled && humidityCount.IsEnabled && !temperatureCenter.IsReadOnly,
             "JJF1101 actual-work-position mode exposes the user-requested point customization");
+        temperatureCount.SelectedItem = 5;
+        humidityCount.SelectedItem = 2;
+        Assert(temperatureCenter.Text == "5" && humidityCenter.Text == "2" &&
+               channelMappingSummary.Text.Contains("T5→CH5", StringComparison.Ordinal) &&
+               !channelMappingSummary.Text.Contains("T6→", StringComparison.Ordinal),
+            "custom point-count dropdowns clamp center points and refresh logical channel mappings");
 
         standard.SelectedIndex = 1;
         Assert(volume.SelectedIndex == -1 && humidityCount.Visibility == Visibility.Collapsed && figureButton.Visibility == Visibility.Visible &&
@@ -91,12 +114,12 @@ internal static class Program
         samplingInterval.Text = "120";
         Assert(samplingInterval.Text == "120", "JJF1376 custom interval should remain editable");
         volume.SelectedIndex = 0;
-        Assert(temperatureCount.Text == "5" && temperatureCenter.Text == "3" && temperatureCount.IsReadOnly,
+        Assert(Equals(temperatureCount.SelectedItem, 5) && temperatureCenter.Text == "3" && !temperatureCount.IsEnabled,
             "JJF1376 <=0.15m3 five-point linkage");
         volume.SelectedIndex = 1;
-        Assert(temperatureCount.Text == "9" && temperatureCenter.Text == "9", "JJF1376 >0.15m3 nine-point linkage");
+        Assert(Equals(temperatureCount.SelectedItem, 9) && temperatureCenter.Text == "9", "JJF1376 >0.15m3 nine-point linkage");
         layout.SelectedIndex = 2;
-        Assert(!temperatureCount.IsReadOnly && !temperatureCenter.IsReadOnly, "JJF1376 custom work-position mode is editable");
+        Assert(temperatureCount.IsEnabled && !temperatureCenter.IsReadOnly, "JJF1376 custom work-position mode is editable");
         Assert(Find<TextBlock>(taskPage, "StandardCapabilityTextBlock").Text.Contains("0.02") &&
                Find<TextBlock>(taskPage, "StandardCapabilityTextBlock").Text.Contains("廉金属不低于1级"),
             "furnace task page should reference the normative instrument class and thermocouple grade automatically");
@@ -306,6 +329,9 @@ internal static class Program
         ComboBox temperaturePointCount = Find<ComboBox>(workbench, "TemperaturePointCountComboBox");
         ComboBox humidityPointCount = Find<ComboBox>(workbench, "HumidityPointCountComboBox");
         Button channelConfigurationButton = Find<Button>(workbench, "ChannelConfigurationButton");
+        Button backToTaskButton = Find<Button>(workbench, "BackToTaskButton");
+        Button editTaskButton = Find<Button>(workbench, "EditTaskButton");
+        TextBlock batteryLevel = Find<TextBlock>(workbench, "BatteryLevelTextBlock");
         if (temperaturePointCount.Items.Count != InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + 1 ||
             humidityPointCount.Items.Count != InspectionInstrumentProtocol.PhysicalHumidityChannelCount + 1 ||
             !Equals(temperaturePointCount.Items[temperaturePointCount.Items.Count - 1], InspectionInstrumentProtocol.PhysicalTemperatureChannelCount.ToString()) ||
@@ -313,6 +339,15 @@ internal static class Program
             throw new InvalidOperationException("workbench point selectors should expose only the current 24 temperature and 9 humidity interfaces");
         if (channelConfigurationButton.IsEnabled)
             throw new InvalidOperationException("device channel configuration must stay disabled before the serial port is connected");
+        if (!batteryLevel.Text.Contains("剩余电量", StringComparison.Ordinal))
+            throw new InvalidOperationException("workbench device card should expose the remaining battery status");
+        if (!Equals(backToTaskButton.Content, "← 返回任务配置") ||
+            !Equals(editTaskButton.Content, "修改任务配置") ||
+            backToTaskButton.Width < 130 ||
+            string.IsNullOrWhiteSpace(backToTaskButton.ToolTip?.ToString()) ||
+            string.IsNullOrWhiteSpace(editTaskButton.ToolTip?.ToString()))
+            throw new InvalidOperationException(
+                "task configuration navigation should be prominent in both the page header and current-task card");
         object frozenColumns = matrix.ReadLocalValue(DataGrid.FrozenColumnCountProperty);
         if (frozenColumns is not int frozenColumnCount || frozenColumnCount != 2)
             throw new InvalidOperationException("measurement matrix should keep sequence and time visible while horizontally scrolling");
@@ -332,13 +367,27 @@ internal static class Program
             !workbenchCode.Contains("ToString(\"F2\", CultureInfo.InvariantCulture)", StringComparison.Ordinal))
             throw new InvalidOperationException("negative humidity and probe-temperature diagnostics should remain visible to the operator");
         if (!workbenchCode.Contains("ChannelCorrectionService.ApplyForMeasurement", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("MeasurementChannelEnableService.Apply(data, _activeChannelEnabled)", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("_channelProfileService.TryLoad", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("DataStatus.Disabled) return \"关闭\"", StringComparison.Ordinal) ||
             !workbenchCode.Contains("MeasurementChannelMappingService.ApplyTaskMapping", StringComparison.Ordinal) ||
             !workbenchCode.Contains("MeasurementChannelMappingService.GetRequiredReadChannelCount", StringComparison.Ordinal) ||
             !workbenchCode.Contains("_runStateService.EnsureStarted(slaveAddress)", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("TryRefreshRemainingBattery(_activeSlaveAddress)", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("TryCalculateRange", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("数据不足（", StringComparison.Ordinal) ||
+            workbenchCode.Contains("return double.PositiveInfinity", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("_deviceTransitionInProgress", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CaptureExpectedDeviceError(() => _runStateService.EnsureStarted(slaveAddress))", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("在后台线程内部把可预期的设备通信异常转换为错误文本", StringComparison.Ordinal) ||
             !workbenchCode.Contains("SystemSettingsContext.TemperatureChannelCorrections", StringComparison.Ordinal) ||
             !workbenchCode.Contains("CalibrationTaskContext.ReferencedTemperatureCorrections", StringComparison.Ordinal) ||
             !workbenchCode.Contains("CalibrationTaskContext.CalibrationDate = DateTime.Today", StringComparison.Ordinal))
-            throw new InvalidOperationException("workbench should use staged correction sources and refresh the system calibration date when formal sampling starts");
+            throw new InvalidOperationException("workbench should serialize connect/start transitions, reject incomplete stability windows and apply staged corrections");
+        int enableFilterIndex = workbenchCode.IndexOf("MeasurementChannelEnableService.Apply(data, _activeChannelEnabled)", StringComparison.Ordinal);
+        int correctionIndex = workbenchCode.IndexOf("ChannelCorrectionService.ApplyForMeasurement", StringComparison.Ordinal);
+        if (enableFilterIndex < 0 || correctionIndex < 0 || enableFilterIndex > correctionIndex)
+            throw new InvalidOperationException("disabled physical channels must be rejected before corrections and logical point mapping");
         if (!workbenchCode.Contains("TryAlignRealtimeIntervalForFormalCalibration", StringComparison.Ordinal) ||
             !workbenchCode.Contains("RestoreRealtimeIntervalAfterFormalCalibration", StringComparison.Ordinal) ||
             !workbenchCode.Contains("AdvanceNextCalibrationSampleAt(snapshot.Timestamp", StringComparison.Ordinal))
@@ -377,6 +426,12 @@ internal static class Program
             !configurationServiceCode.Contains("MatchingConfirmationCount", StringComparison.Ordinal) ||
             !configurationServiceCode.Contains("疑似迟到测量帧", StringComparison.Ordinal) ||
             !configurationServiceCode.Contains("HasInvalidRegisters", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("HasNonCanonicalRegisterOrder", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("EncodeConfigurationWriteValue(expectedValue)", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("ConfigurationPreflightCommunicationException", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("ConfigurationSnapshotChangedException", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("writePhaseStarted", StringComparison.Ordinal) ||
+            !configurationServiceCode.Contains("CanRetryWithCurrentSnapshot", StringComparison.Ordinal) ||
             !configurationServiceCode.Contains("forceRepair", StringComparison.Ordinal) ||
             !configurationServiceCode.Contains("稳定异常配置", StringComparison.Ordinal) ||
             !configurationServiceCode.Contains("TryReadConfigurationBlockRegisterByRegister", StringComparison.Ordinal) ||
@@ -402,20 +457,69 @@ internal static class Program
                 "Modbus reads must use three bounded attempts and a transaction-local receive buffer");
         string configurationWindowCode = File.ReadAllText(Path.Combine(
             "UpperComInspectionInstrument2022", "Views", "InstrumentChannelConfigurationWindow.xaml.cs"));
+        string configurationWindowXaml = File.ReadAllText(Path.Combine(
+            "UpperComInspectionInstrument2022", "Views", "InstrumentChannelConfigurationWindow.xaml"));
+        if (configurationWindowXaml.Contains("设备使能通道", StringComparison.Ordinal) ||
+            configurationWindowXaml.Contains("DataGridCheckBoxColumn", StringComparison.Ordinal))
+            throw new InvalidOperationException("humidity configuration should expose H1-H9 directly without an internal channel-number column");
+        ModbusRtuClient configurationClient = new();
+        InspectionDataAcquisitionService configurationAcquisition = new(new InspectionMeterService(configurationClient));
+        InstrumentChannelConfigurationWindow unifiedConfigurationWindow = new(
+            configurationClient,
+            configurationAcquisition,
+            1,
+            5,
+            2,
+            new[] { 16, 17, 18, 19, 20 },
+            new[] { 6, 7 });
+        DataGrid unifiedTemperatureMapping = Find<DataGrid>(unifiedConfigurationWindow, "TemperatureMappingGrid");
+        DataGrid unifiedHumidityMapping = Find<DataGrid>(unifiedConfigurationWindow, "HumidityMappingGrid");
+        DataGridComboBoxColumn unifiedTemperaturePhysicalColumn =
+            (DataGridComboBoxColumn)unifiedTemperatureMapping.Columns[1];
+        if (unifiedTemperatureMapping.Items.Count != 5 || unifiedHumidityMapping.Items.Count != 2 ||
+            unifiedTemperaturePhysicalColumn.ItemsSource.Cast<object>().Count() !=
+            InspectionInstrumentProtocol.PhysicalTemperatureChannelCount ||
+            !Find<TextBlock>(unifiedConfigurationWindow, "BindingSummaryTextBlock").Text.Contains("CH16", StringComparison.Ordinal) ||
+            !Find<TextBlock>(unifiedConfigurationWindow, "BindingSummaryTextBlock").Text.Contains("H6", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "the unified device configuration should preserve task mappings and preview their derived enable state");
         if (!configurationWindowCode.Contains("_loadedConfiguration", StringComparison.Ordinal) ||
-            !configurationWindowCode.Contains("loadedConfiguration.TemperatureSensorTypes.SequenceEqual", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("loadedConfiguration.ChannelEnabled.SequenceEqual", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("ReadChannelConfiguration", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("WriteChannelEnabledAndSave", StringComparison.Ordinal) ||
+            configurationWindowCode.Contains("SensorTypeCode", StringComparison.Ordinal) ||
+            configurationWindowXaml.Contains("SensorTypeColumn", StringComparison.Ordinal) ||
+            !configurationWindowXaml.Contains("当前设备", StringComparison.Ordinal) ||
+            !configurationWindowXaml.Contains("配置诊断", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("protected override void OnClosing", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("if (_isBusy)", StringComparison.Ordinal) ||
-            !configurationWindowCode.Contains("CloseButton.IsEnabled = !busy", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("ConfigurationOperation.Reading", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("CloseButton.IsEnabled = !busy || _activeOperation == ConfigurationOperation.Reading", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("_readCancellation?.Cancel()", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("_closeAfterReadCancellation = true", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("Dispatcher.BeginInvoke(new Action(Close))", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("TraceConfiguration", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("最后请求=", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("保存后修复", StringComparison.Ordinal) ||
-            !configurationWindowCode.Contains("loadedConfiguration.HasInvalidRegisters", StringComparison.Ordinal) ||
-            !configurationWindowCode.Contains("已记录为实时测量启动前的核对基准", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("loadedConfiguration.HasEnableRegistersNeedingRepair", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("可疑旧字节序，保存后修复", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("TryBuildDesiredChannelState", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("CompleteJointSave", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("ShowSaveResultAndClose", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("保存成功。", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("保存完成（有提示）", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("其余物理通道自动关闭", StringComparison.Ordinal) ||
+            !configurationWindowXaml.Contains("TemperatureMappingGrid", StringComparison.Ordinal) ||
+            !configurationWindowXaml.Contains("HumidityMappingGrid", StringComparison.Ordinal) ||
+            !configurationWindowXaml.Contains("保存绑定并应用设备", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("CanRetryWithCurrentSnapshot: true", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("写入前核对暂时无响应", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("MessageBoxButton.YesNo", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("当前快照和编辑内容已保留", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("配置写入可能已经开始", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("_profileService.TrySave", StringComparison.Ordinal))
             throw new InvalidOperationException(
-                "device configuration window must retain a successful read snapshot, skip no-op saves, remain locked and persist diagnostic traces during a serial transaction");
+                "task mapping must drive device enables in the unified configuration window while reads remain cancellable and writes protected");
         string channelProfileServiceCode = File.ReadAllText(Path.Combine(
             "UpperComInspectionInstrument2022", "Services", "InspectionInstrumentChannelProfileService.cs"));
         if (!channelProfileServiceCode.Contains("instrument-channel-profiles.json", StringComparison.Ordinal) ||

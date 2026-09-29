@@ -1,3 +1,4 @@
+using DocumentFormat.OpenXml.Office2010.Excel;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -51,6 +52,29 @@ namespace UpperComInspectionInstrument2022.Services
 
         public bool HasInvalidRegisters =>
             InvalidSensorTypeRegisters.Any(value => value) || InvalidEnableRegisters.Any(value => value);
+
+        /// <summary>
+        /// 同一配置区域内的非零寄存器理应使用一致的读回字节序。
+        /// 少数寄存器与区域主字节序相反时，通常表示旧版上位机曾把读回字节序错误地用于功能码06写入：
+        /// 界面虽然能把 0x0001 和 0x0100 都解码成逻辑值1，但巡检仪内部可能实际保存成256。
+        /// </summary>
+        public bool HasNonCanonicalRegisterOrder =>
+            TemperatureSensorTypes.Select((value, index) => new { value, index })
+                .Any(item => item.value != 0 &&
+                             SensorTypeRegisterLowByteFirst[item.index] != SensorTypeRegistersUseLowByteFirst) ||
+            ChannelEnabled.Select((value, index) => new { value, index })
+                .Any(item => item.value &&
+                             EnableRegisterLowByteFirst[item.index] != EnableRegistersUseLowByteFirst);
+
+        /// <summary>是否存在必须通过重新写入消除的非法值或可疑旧字节序值。</summary>
+        public bool HasRegistersNeedingRepair => HasInvalidRegisters || HasNonCanonicalRegisterOrder;
+
+        /// <summary>通道使能区是否存在需要重新写入修复的非法值或可疑旧字节序值。</summary>
+        public bool HasEnableRegistersNeedingRepair =>
+            InvalidEnableRegisters.Any(value => value) ||
+            ChannelEnabled.Select((value, index) => new { value, index })
+                .Any(item => item.value &&
+                             EnableRegisterLowByteFirst[item.index] != EnableRegistersUseLowByteFirst);
     }
 
     /// <summary>开始测量前读取的33路通道使能状态，不访问温度传感器类型区。</summary>
@@ -61,6 +85,27 @@ namespace UpperComInspectionInstrument2022.Services
         public bool[] InvalidRegisters { get; init; } = Array.Empty<bool>();
         public bool[] RegisterLowByteFirst { get; init; } = Array.Empty<bool>();
         public string CommunicationWarning { get; init; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 通道配置写入事务的可判定失败。写前通信核对失败且尚未发出任何配置写命令时，
+    /// <see cref="CanRetryWithCurrentSnapshot"/> 为 true，界面可以保留用户编辑和读取快照直接重试。
+    /// </summary>
+    public sealed class InspectionInstrumentConfigurationWriteException : InvalidOperationException
+    {
+        public InspectionInstrumentConfigurationWriteException(
+            string message,
+            bool canRetryWithCurrentSnapshot,
+            bool deviceMayHaveChanged,
+            Exception innerException)
+            : base(message, innerException)
+        {
+            CanRetryWithCurrentSnapshot = canRetryWithCurrentSnapshot;
+            DeviceMayHaveChanged = deviceMayHaveChanged;
+        }
+
+        public bool CanRetryWithCurrentSnapshot { get; }
+        public bool DeviceMayHaveChanged { get; }
     }
 
     /// <summary>
@@ -77,8 +122,11 @@ namespace UpperComInspectionInstrument2022.Services
             _client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
-        public InspectionInstrumentConfiguration Read(byte slaveAddress)
+        public InspectionInstrumentConfiguration Read(
+            byte slaveAddress,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int chunkRegisterCount = InspectionInstrumentProtocol.ConfigurationFallbackChunkRegisterCount;
             // 实机串口助手证明配置保持寄存器可直接用功能码03读取。
             // 读取本身不切换配置模式，避免无关的功能码05命令清空或扰乱正在返回的读响应。
@@ -88,16 +136,20 @@ namespace UpperComInspectionInstrument2022.Services
                 InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount,
                 "读取温度通道传感器类型",
                 chunkRegisterCount,
-                13);
+                13,
+                cancellationToken);
 
-            WaitForDeviceConfigurationCycle();
+            WaitForDeviceConfigurationCycle(cancellationToken);
             ushort[] rawEnableRegisters = ReadConfigurationRegisters(
                 slaveAddress,
                 InspectionInstrumentProtocol.ChannelEnableStartAddress,
                 InspectionInstrumentProtocol.ConfigurableEnableChannelCount,
                 "读取通道使能状态",
                 chunkRegisterCount,
-                1);
+                1,
+                cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             DecodedConfigurationBlock sensorTypeBlock = DecodeConfigurationBlock(
                 rawSensorTypes,
@@ -131,7 +183,9 @@ namespace UpperComInspectionInstrument2022.Services
         /// <summary>
         /// 只读取33路通道使能，用于开始实时测量前核对下位机本机界面是否覆盖了上位机配置。
         /// </summary>
-        public InspectionInstrumentEnableState ReadChannelEnabled(byte slaveAddress)
+        public InspectionInstrumentEnableState ReadChannelEnabled(
+            byte slaveAddress,
+            CancellationToken cancellationToken = default)
         {
             ushort[] rawEnableRegisters = ReadConfigurationRegisters(
                 slaveAddress,
@@ -139,7 +193,8 @@ namespace UpperComInspectionInstrument2022.Services
                 InspectionInstrumentProtocol.ConfigurableEnableChannelCount,
                 "检查通道使能状态",
                 InspectionInstrumentProtocol.ConfigurationFallbackChunkRegisterCount,
-                1);
+                1,
+                cancellationToken);
             DecodedConfigurationBlock enableBlock = DecodeConfigurationBlock(
                 rawEnableRegisters,
                 1,
@@ -158,11 +213,64 @@ namespace UpperComInspectionInstrument2022.Services
             };
         }
 
+        /// <summary>
+        /// 只读取任务绑定实际需要维护的33路通道使能，并转换成配置事务快照。
+        /// 当前设备只支持在本机统一设置传感器类型，上位机不再访问或修改逐通道类型寄存器。
+        /// </summary>
+        public InspectionInstrumentConfiguration ReadChannelConfiguration(
+            byte slaveAddress,
+            CancellationToken cancellationToken = default)
+        {
+            InspectionInstrumentEnableState state = ReadChannelEnabled(slaveAddress, cancellationToken);
+            int sensorCount = InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount;
+            return new InspectionInstrumentConfiguration
+            {
+                TemperatureSensorTypes = new ushort[sensorCount],
+                ChannelEnabled = state.ChannelEnabled,
+                SensorTypeRegisterLowByteFirst = new bool[sensorCount],
+                EnableRegisterLowByteFirst = state.RegisterLowByteFirst,
+                SensorTypeRegisterRawValues = new ushort[sensorCount],
+                EnableRegisterRawValues = state.RawRegisters,
+                InvalidSensorTypeRegisters = new bool[sensorCount],
+                InvalidEnableRegisters = state.InvalidRegisters,
+                EnableRegistersUseLowByteFirst = GetDefaultOrder(state.RegisterLowByteFirst),
+                ConfigurationChunkRegisterCount = InspectionInstrumentProtocol.ConfigurationFallbackChunkRegisterCount,
+                CommunicationWarning = state.CommunicationWarning
+            };
+        }
+
         public InspectionInstrumentConfiguration WriteAndSave(
             byte slaveAddress,
             InspectionInstrumentConfiguration current,
             IReadOnlyList<ushort> sensorTypes,
             IReadOnlyList<bool> channelEnabled)
+        {
+            return WriteAndSaveCore(slaveAddress, current, sensorTypes, channelEnabled, true);
+        }
+
+        /// <summary>
+        /// 只写入并核对33路通道使能。设备传感器类型由下位机统一设置，本方法不会访问
+        /// 0x0146～0x015D，也不会因该区域存在旧值而尝试修复。
+        /// </summary>
+        public InspectionInstrumentConfiguration WriteChannelEnabledAndSave(
+            byte slaveAddress,
+            InspectionInstrumentConfiguration current,
+            IReadOnlyList<bool> channelEnabled)
+        {
+            return WriteAndSaveCore(
+                slaveAddress,
+                current,
+                current.TemperatureSensorTypes,
+                channelEnabled,
+                false);
+        }
+
+        private InspectionInstrumentConfiguration WriteAndSaveCore(
+            byte slaveAddress,
+            InspectionInstrumentConfiguration current,
+            IReadOnlyList<ushort> sensorTypes,
+            IReadOnlyList<bool> channelEnabled,
+            bool updateSensorTypeRegisters)
         {
             if (current == null) throw new ArgumentNullException(nameof(current));
             if (sensorTypes.Count != InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount)
@@ -175,9 +283,25 @@ namespace UpperComInspectionInstrument2022.Services
 
             ushort[] requestedEnable = channelEnabled.Select(value => value ? (ushort)1 : (ushort)0).ToArray();
             ushort[] currentEnable = current.ChannelEnabled.Select(value => value ? (ushort)1 : (ushort)0).ToArray();
-            bool hasChanges = !current.TemperatureSensorTypes.SequenceEqual(sensorTypes) ||
+            bool[] sensorRegistersToRepair = updateSensorTypeRegisters
+                ? current.InvalidSensorTypeRegisters
+                    .Select((invalid, index) =>
+                        invalid ||
+                        (current.TemperatureSensorTypes[index] != 0 &&
+                         current.SensorTypeRegisterLowByteFirst[index] != current.SensorTypeRegistersUseLowByteFirst))
+                    .ToArray()
+                : new bool[InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount];
+            bool[] enableRegistersToRepair = current.InvalidEnableRegisters
+                .Select((invalid, index) =>
+                    invalid ||
+                    (current.ChannelEnabled[index] &&
+                     current.EnableRegisterLowByteFirst[index] != current.EnableRegistersUseLowByteFirst))
+                .ToArray();
+            bool hasChanges = (updateSensorTypeRegisters &&
+                               !current.TemperatureSensorTypes.SequenceEqual(sensorTypes)) ||
                               !currentEnable.SequenceEqual(requestedEnable) ||
-                              current.HasInvalidRegisters;
+                              (updateSensorTypeRegisters && sensorRegistersToRepair.Any(value => value)) ||
+                              enableRegistersToRepair.Any(value => value);
             if (!hasChanges) return current;
 
             bool[] sensorOrders = current.SensorTypeRegisterLowByteFirst.ToArray();
@@ -186,27 +310,31 @@ namespace UpperComInspectionInstrument2022.Services
             List<string> warnings = new();
             InspectionInstrumentConfiguration? savedConfiguration = null;
             Exception? operationFailure = null;
+            bool writePhaseStarted = false;
             string restartError = string.Empty;
             try
             {
                 // 在第一次写入前核对所有待变更地址，避免用户读取快照后又在设备面板修改配置时，
                 // 上位机用过期快照覆盖设备端的新设置。预检必须全部通过后才允许开始写入。
-                ValidateChangedRegistersAgainstSnapshot(
-                    slaveAddress,
-                    InspectionInstrumentProtocol.SensorTypeStartAddress,
-                    current.TemperatureSensorTypes,
-                    current.SensorTypeRegisterRawValues,
-                    current.InvalidSensorTypeRegisters,
-                    sensorTypes,
-                    sensorOrders,
-                    13,
-                    "温度传感器类型");
+                if (updateSensorTypeRegisters)
+                {
+                    ValidateChangedRegistersAgainstSnapshot(
+                        slaveAddress,
+                        InspectionInstrumentProtocol.SensorTypeStartAddress,
+                        current.TemperatureSensorTypes,
+                        current.SensorTypeRegisterRawValues,
+                        sensorRegistersToRepair,
+                        sensorTypes,
+                        sensorOrders,
+                        13,
+                        "温度传感器类型");
+                }
                 ValidateChangedRegistersAgainstSnapshot(
                     slaveAddress,
                     InspectionInstrumentProtocol.ChannelEnableStartAddress,
                     currentEnable,
                     current.EnableRegisterRawValues,
-                    current.InvalidEnableRegisters,
+                    enableRegistersToRepair,
                     requestedEnable,
                     enableOrders,
                     1,
@@ -215,24 +343,30 @@ namespace UpperComInspectionInstrument2022.Services
                 // 协议仅声明配置寄存器可读写，并未要求写入前必须进入配置模式。
                 // 默认使用功能码06逐项写入并读回；只有收到明确 Modbus 异常响应时才降级进入配置模式。
                 // 超时、丢帧或读回失败属于“结果不确定”，此时切换模式只会扩大设备停止扫描的风险。
-                WriteChangedRegistersAndVerify(
-                    slaveAddress,
-                    InspectionInstrumentProtocol.SensorTypeStartAddress,
-                    current.TemperatureSensorTypes,
-                    sensorTypes,
-                    current.InvalidSensorTypeRegisters,
-                    sensorOrders,
-                    13,
-                    "温度传感器类型",
-                    ref configurationModeEntered,
-                    warnings);
+                writePhaseStarted = true;
+                if (updateSensorTypeRegisters)
+                {
+                    WriteChangedRegistersAndVerify(
+                        slaveAddress,
+                        InspectionInstrumentProtocol.SensorTypeStartAddress,
+                        current.TemperatureSensorTypes,
+                        sensorTypes,
+                        sensorRegistersToRepair,
+                        sensorOrders,
+                        current.SensorTypeRegistersUseLowByteFirst,
+                        13,
+                        "温度传感器类型",
+                        ref configurationModeEntered,
+                        warnings);
+                }
                 WriteChangedRegistersAndVerify(
                     slaveAddress,
                     InspectionInstrumentProtocol.ChannelEnableStartAddress,
                     currentEnable,
                     requestedEnable,
-                    current.InvalidEnableRegisters,
+                    enableRegistersToRepair,
                     enableOrders,
+                    current.EnableRegistersUseLowByteFirst,
                     1,
                     "通道使能",
                     ref configurationModeEntered,
@@ -252,19 +386,25 @@ namespace UpperComInspectionInstrument2022.Services
 
                 savedConfiguration = new InspectionInstrumentConfiguration
                 {
-                    TemperatureSensorTypes = sensorTypes.ToArray(),
+                    TemperatureSensorTypes = updateSensorTypeRegisters
+                        ? sensorTypes.ToArray()
+                        : current.TemperatureSensorTypes.ToArray(),
                     ChannelEnabled = channelEnabled.ToArray(),
                     SensorTypeRegistersUseLowByteFirst = GetDefaultOrder(sensorOrders),
                     EnableRegistersUseLowByteFirst = GetDefaultOrder(enableOrders),
                     SensorTypeRegisterLowByteFirst = sensorOrders,
                     EnableRegisterLowByteFirst = enableOrders,
-                    SensorTypeRegisterRawValues = sensorTypes
-                        .Select((value, index) => EncodeConfigurationRegister(value, sensorOrders[index]))
-                        .ToArray(),
+                    SensorTypeRegisterRawValues = updateSensorTypeRegisters
+                        ? sensorTypes.Select((value, index) =>
+                                EncodeConfigurationRegister(value, sensorOrders[index]))
+                            .ToArray()
+                        : current.SensorTypeRegisterRawValues.ToArray(),
                     EnableRegisterRawValues = requestedEnable
                         .Select((value, index) => EncodeConfigurationRegister(value, enableOrders[index]))
                         .ToArray(),
-                    InvalidSensorTypeRegisters = new bool[sensorTypes.Count],
+                    InvalidSensorTypeRegisters = updateSensorTypeRegisters
+                        ? new bool[sensorTypes.Count]
+                        : current.InvalidSensorTypeRegisters.ToArray(),
                     InvalidEnableRegisters = new bool[channelEnabled.Count],
                     ConfigurationChunkRegisterCount = current.ConfigurationChunkRegisterCount,
                     UsedCompatibilityConfigurationMode = configurationModeEntered
@@ -316,8 +456,14 @@ namespace UpperComInspectionInstrument2022.Services
                 string recoveryText = string.IsNullOrWhiteSpace(restartError)
                     ? "失败后已确认设备恢复采集。"
                     : $"失败后设备也未确认恢复采集：{restartError}";
-                throw new InvalidOperationException(
+                bool canRetryWithCurrentSnapshot = !writePhaseStarted &&
+                                                   operationFailure is ConfigurationPreflightCommunicationException;
+                bool deviceMayHaveChanged = writePhaseStarted ||
+                                            operationFailure is ConfigurationSnapshotChangedException;
+                throw new InspectionInstrumentConfigurationWriteException(
                     $"{operationFailure.Message}；{recoveryText}",
+                    canRetryWithCurrentSnapshot,
+                    deviceMayHaveChanged,
                     operationFailure);
             }
 
@@ -349,14 +495,14 @@ namespace UpperComInspectionInstrument2022.Services
                 if (forceRepair)
                 {
                     if (!TryReadRawRegisterWithRetries(slaveAddress, address, out ushort actualRawValue, out string rawError))
-                        throw new InvalidOperationException(
+                        throw new ConfigurationPreflightCommunicationException(
                             $"写入前无法核对{valueName}异常地址 0x{address:X4}：{rawError}。本次尚未修改设备。");
                     if (actualRawValue == snapshotRawValues[index]) continue;
 
                     bool order = lowByteFirstByRegister[index];
                     if (!TryDecodeConfigurationValue(actualRawValue, maximumValue, ref order, out ushort repairedActualValue) ||
                         repairedActualValue != requested[index])
-                        throw new InvalidOperationException(
+                        throw new ConfigurationSnapshotChangedException(
                             $"{valueName}异常地址 0x{address:X4} 已在设备端变化：读取快照原始值为 " +
                             $"0x{snapshotRawValues[index]:X4}，设备当前为 0x{actualRawValue:X4}。请重新读取后再修复。");
                     lowByteFirstByRegister[index] = order;
@@ -371,11 +517,11 @@ namespace UpperComInspectionInstrument2022.Services
                         valueName,
                         out ushort actualValue,
                         out string error))
-                    throw new InvalidOperationException(
+                    throw new ConfigurationPreflightCommunicationException(
                         $"写入前无法核对{valueName}地址 0x{address:X4}：{error}。为避免部分写入，本次尚未修改设备。");
 
                 if (actualValue != snapshot[index] && actualValue != requested[index])
-                    throw new InvalidOperationException(
+                    throw new ConfigurationSnapshotChangedException(
                         $"{valueName}地址 0x{address:X4} 已在设备端变化：读取快照为 {snapshot[index]}，" +
                         $"设备当前为 {actualValue}，待写入为 {requested[index]}。请重新读取配置后再修改。");
             }
@@ -392,6 +538,7 @@ namespace UpperComInspectionInstrument2022.Services
             IReadOnlyList<ushort> requested,
             IReadOnlyList<bool> forceWriteRegisters,
             bool[] lowByteFirstByRegister,
+            bool expectedReadLowByteFirst,
             ushort maximumValue,
             string valueName,
             ref bool configurationModeEntered,
@@ -409,6 +556,8 @@ namespace UpperComInspectionInstrument2022.Services
                         address,
                         requested[index],
                         maximumValue,
+                        forceWriteRegisters[index],
+                        expectedReadLowByteFirst,
                         ref lowByteFirstByRegister[index],
                         valueName,
                         out string directError,
@@ -438,6 +587,8 @@ namespace UpperComInspectionInstrument2022.Services
                         address,
                         requested[index],
                         maximumValue,
+                        forceWriteRegisters[index],
+                        expectedReadLowByteFirst,
                         ref lowByteFirstByRegister[index],
                         valueName,
                         out string compatibilityError,
@@ -454,6 +605,8 @@ namespace UpperComInspectionInstrument2022.Services
             ushort address,
             ushort expectedValue,
             ushort maximumValue,
+            bool forceWrite,
+            bool expectedReadLowByteFirst,
             ref bool lowByteFirst,
             string valueName,
             out string error,
@@ -463,17 +616,21 @@ namespace UpperComInspectionInstrument2022.Services
             explicitlyRejected = false;
             for (int writeAttempt = 1; writeAttempt <= 2; writeAttempt++)
             {
-                if (TryReadLogicalRegister(
+                if (!forceWrite && TryReadLogicalRegister(
                         slaveAddress,
                         address,
                         expectedValue,
                         maximumValue,
+                        false,
+                        expectedReadLowByteFirst,
                         ref lowByteFirst,
                         valueName,
                         out error))
                     return true;
 
-                ushort encodedValue = EncodeConfigurationRegister(expectedValue, lowByteFirst);
+                // 功能码06的寄存器值始终按标准 Modbus 大端顺序发送。
+                // 读取响应中的兼容字节序只用于解码，不能反向套用到写帧。
+                ushort encodedValue = EncodeConfigurationWriteValue(expectedValue);
                 ModbusResponse writeResponse = _client.WriteSingleRegister(
                     slaveAddress,
                     address,
@@ -494,6 +651,8 @@ namespace UpperComInspectionInstrument2022.Services
                             address,
                             expectedValue,
                             maximumValue,
+                            true,
+                            expectedReadLowByteFirst,
                             ref lowByteFirst,
                             valueName,
                             out error))
@@ -520,6 +679,8 @@ namespace UpperComInspectionInstrument2022.Services
             ushort address,
             ushort expectedValue,
             ushort maximumValue,
+            bool requireExpectedOrder,
+            bool expectedReadLowByteFirst,
             ref bool lowByteFirst,
             string valueName,
             out string error)
@@ -534,12 +695,15 @@ namespace UpperComInspectionInstrument2022.Services
                     out error))
                 return false;
 
-            if (actualValue == expectedValue)
+            if (actualValue == expectedValue &&
+                (!requireExpectedOrder || expectedValue == 0 || lowByteFirst == expectedReadLowByteFirst))
             {
                 error = string.Empty;
                 return true;
             }
-            error = $"读回值为 {actualValue}，期望 {expectedValue}";
+            error = actualValue != expectedValue
+                ? $"读回值为 {actualValue}，期望 {expectedValue}"
+                : $"读回逻辑值虽然为 {expectedValue}，但字节序仍与设备配置区主格式不一致，拒绝误判为成功";
             return false;
         }
 
@@ -672,8 +836,10 @@ namespace UpperComInspectionInstrument2022.Services
             int count,
             string operation,
             int chunkSize,
-            ushort maximumValue)
+            ushort maximumValue,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ushort[] values = new ushort[count];
             chunkSize = NormalizeConfigurationChunkSize(chunkSize);
             List<ConfigurationReadBlock> blocks = new();
@@ -690,6 +856,7 @@ namespace UpperComInspectionInstrument2022.Services
             {
                 foreach (ConfigurationReadBlock block in blocks.Where(item => !item.Completed))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     ModbusResponse chunkResponse = _client.ReadHoldingRegisters(
                         slaveAddress,
                         block.Address,
@@ -758,11 +925,13 @@ namespace UpperComInspectionInstrument2022.Services
                     {
                         block.LastError = chunkResponse.ErrorMessage ?? "设备未确认请求";
                     }
-                    WaitForDeviceConfigurationCycle();
+                    WaitForDeviceConfigurationCycle(cancellationToken);
                 }
                 if (blocks.All(item => item.Completed)) return values;
                 if (round < InspectionInstrumentProtocol.ConfigurationReadRoundCount)
-                    Thread.Sleep(InspectionInstrumentProtocol.ConfigurationReadRoundDelayMilliseconds);
+                    WaitForCancellationOrDelay(
+                        cancellationToken,
+                        InspectionInstrumentProtocol.ConfigurationReadRoundDelayMilliseconds);
             }
 
             // 某些固件在扫描传感器期间会偶发忽略特定4寄存器分段，但同一地址的单寄存器请求仍可响应。
@@ -775,6 +944,7 @@ namespace UpperComInspectionInstrument2022.Services
                         maximumValue,
                         operation,
                         values,
+                        cancellationToken,
                         out string fallbackError))
                 {
                     block.Completed = true;
@@ -806,6 +976,7 @@ namespace UpperComInspectionInstrument2022.Services
             ushort maximumValue,
             string operation,
             ushort[] destination,
+            CancellationToken cancellationToken,
             out string error)
         {
             ushort[] recovered = new ushort[block.Quantity];
@@ -813,12 +984,14 @@ namespace UpperComInspectionInstrument2022.Services
             bool acceptedStableInvalidValues = false;
             for (int index = 0; index < block.Quantity; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ushort address = checked((ushort)(block.Address + index));
                 ushort? invalidCandidate = null;
                 bool completed = false;
                 string lastError = "设备未确认请求";
                 for (int attempt = 1; attempt <= InspectionInstrumentProtocol.ConfigurationReadRoundCount; attempt++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     ModbusResponse response = _client.ReadHoldingRegisters(
                         slaveAddress,
                         address,
@@ -856,12 +1029,14 @@ namespace UpperComInspectionInstrument2022.Services
                     }
 
                     if (attempt < InspectionInstrumentProtocol.ConfigurationReadRoundCount)
-                        Thread.Sleep(InspectionInstrumentProtocol.ConfigurationReadRoundDelayMilliseconds);
+                        WaitForCancellationOrDelay(
+                            cancellationToken,
+                            InspectionInstrumentProtocol.ConfigurationReadRoundDelayMilliseconds);
                 }
 
                 if (!completed)
                     failures.Add($"0x{address:X4}：{lastError}");
-                WaitForDeviceConfigurationCycle();
+                WaitForDeviceConfigurationCycle(cancellationToken);
             }
 
             if (failures.Count > 0)
@@ -941,6 +1116,25 @@ namespace UpperComInspectionInstrument2022.Services
         private static void WaitForDeviceConfigurationCycle() =>
             Thread.Sleep(InspectionInstrumentProtocol.ConfigurationRequestIntervalMilliseconds);
 
+        /// <summary>读取配置时使用可取消等待；写入事务继续使用不可中断等待。</summary>
+        private static void WaitForDeviceConfigurationCycle(CancellationToken cancellationToken) =>
+            WaitForCancellationOrDelay(
+                cancellationToken,
+                InspectionInstrumentProtocol.ConfigurationRequestIntervalMilliseconds);
+
+        /// <summary>在设备恢复间隔内响应窗口关闭请求，避免继续执行后续分段和重试。</summary>
+        private static void WaitForCancellationOrDelay(CancellationToken cancellationToken, int milliseconds)
+        {
+            if (!cancellationToken.CanBeCanceled)
+            {
+                Thread.Sleep(milliseconds);
+                return;
+            }
+
+            if (cancellationToken.WaitHandle.WaitOne(milliseconds))
+                cancellationToken.ThrowIfCancellationRequested();
+        }
+
         /// <summary>
         /// 逐寄存器识别配置值字节序。现场设备同一区域可能同时出现 00 01 和 01 00，
         /// 因此不能再假设整个配置块使用统一格式。非零值保留各自格式；零值无法判断，
@@ -1013,6 +1207,7 @@ namespace UpperComInspectionInstrument2022.Services
                 throw new InvalidOperationException(
                     $"{valueName}返回无法识别的配置值 0x{wireValue:X4}，为保护设备已停止配置操作。");
             useLowByteFirst = lowByteFirstValid;
+
             return useLowByteFirst ? swapped : wireValue;
         }
 
@@ -1024,8 +1219,26 @@ namespace UpperComInspectionInstrument2022.Services
         public static ushort EncodeConfigurationRegister(ushort value, bool useLowByteFirst) =>
             useLowByteFirst ? SwapRegisterBytes(value) : value;
 
+        /// <summary>
+        /// 生成功能码06的写入值。Modbus请求中的16位寄存器始终采用标准大端顺序；
+        /// 设备读取响应的兼容字节序只用于解码，绝不能影响写帧。
+        /// </summary>
+        public static ushort EncodeConfigurationWriteValue(ushort value) => value;
+
         private static ushort SwapRegisterBytes(ushort value) =>
             (ushort)((value << 8) | (value >> 8));
+
+        /// <summary>写入前读取没有取得完整响应；确认尚未发出配置写命令，可保留快照重试。</summary>
+        private sealed class ConfigurationPreflightCommunicationException : InvalidOperationException
+        {
+            public ConfigurationPreflightCommunicationException(string message) : base(message) { }
+        }
+
+        /// <summary>写入前发现设备值已偏离读取快照；即使尚未写入，也必须重新读取配置。</summary>
+        private sealed class ConfigurationSnapshotChangedException : InvalidOperationException
+        {
+            public ConfigurationSnapshotChangedException(string message) : base(message) { }
+        }
 
         private sealed record DecodedConfigurationBlock(
             ushort[] Values,

@@ -466,8 +466,7 @@ namespace UpperComInspectionInstrument2022.Communication
                     {
                         Success = false,
                         RawData = response,
-                        ErrorMessage =
-                            $"从站地址错误，期望 {slaveAddress}，实际 {responseSlave}"
+                        ErrorMessage = $"从站地址错误，期望 {slaveAddress}，实际 {responseSlave}"
                     };
                 }
 

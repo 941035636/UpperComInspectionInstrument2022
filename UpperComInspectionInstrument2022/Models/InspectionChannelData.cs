@@ -41,7 +41,12 @@ namespace UpperComInspectionInstrument2022.Models
         /// <summary>寄存器或字节数据无法按协议解析。</summary>
         ParseError,
         /// <summary>设备返回断线、超量程等约定的特殊值。</summary>
-        DeviceSpecialValue
+        DeviceSpecialValue,
+        /// <summary>
+        /// 物理通道已在巡检仪配置中关闭。设备测量寄存器可能仍保留关闭前的最后值，
+        /// 该值只能用于通信追溯，不能作为当前测量值参与显示、稳定性判定或校准计算。
+        /// </summary>
+        Disabled
     }
 
     /// <summary>

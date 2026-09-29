@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UpperComInspectionInstrument2022.Communication;
 using UpperComInspectionInstrument2022.Models;
 
 namespace UpperComInspectionInstrument2022.Services
@@ -42,6 +43,32 @@ namespace UpperComInspectionInstrument2022.Services
         {
             List<int> normalized = Normalize(mapping, logicalPointCount, maximum);
             return normalized.Count == 0 ? 0 : normalized.Max();
+        }
+
+        /// <summary>
+        /// 根据当前任务绑定生成巡检仪33路使能状态：绑定接口开启，未绑定接口关闭。
+        /// 本方法不修复重复项，调用方必须显式处理错误，避免把有歧义的任务映射写入设备。
+        /// </summary>
+        public static bool[] BuildDeviceEnableState(
+            IReadOnlyCollection<int> temperatureMapping,
+            IReadOnlyCollection<int> humidityMapping)
+        {
+            ArgumentNullException.ThrowIfNull(temperatureMapping);
+            ArgumentNullException.ThrowIfNull(humidityMapping);
+            ValidateMapping(
+                temperatureMapping,
+                InspectionInstrumentProtocol.PhysicalTemperatureChannelCount,
+                "温度");
+            ValidateMapping(
+                humidityMapping,
+                InspectionInstrumentProtocol.PhysicalHumidityChannelCount,
+                "湿度");
+
+            bool[] enabled = new bool[InspectionInstrumentProtocol.ConfigurableEnableChannelCount];
+            foreach (int channel in temperatureMapping) enabled[channel - 1] = true;
+            foreach (int channel in humidityMapping)
+                enabled[InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + channel - 1] = true;
+            return enabled;
         }
 
         /// <summary>
@@ -89,6 +116,14 @@ namespace UpperComInspectionInstrument2022.Services
             IEnumerable<string> temperature = temperatureMapping.Select((physical, index) => $"T{index + 1}→CH{physical}");
             IEnumerable<string> humidity = humidityMapping.Select((physical, index) => $"H{index + 1}→H{physical}");
             return string.Join("；", temperature.Concat(humidity));
+        }
+
+        private static void ValidateMapping(IReadOnlyCollection<int> mapping, int maximum, string type)
+        {
+            if (mapping.Any(channel => channel < 1 || channel > maximum))
+                throw new ArgumentOutOfRangeException(nameof(mapping), $"{type}测点存在越界物理接口。");
+            if (mapping.Distinct().Count() != mapping.Count)
+                throw new ArgumentException($"{type}测点不能重复绑定同一个物理接口。", nameof(mapping));
         }
 
         private static InspectionChannelData CloneWithLogicalPoint(InspectionChannelData source, int logicalPoint, int physicalChannel)

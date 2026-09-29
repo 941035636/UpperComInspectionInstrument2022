@@ -20,6 +20,7 @@ namespace UpperComInspectionInstrument2022.Views
         private bool _loading;
         private List<int> _temperatureChannelMapping = new();
         private List<int> _humidityChannelMapping = new();
+        private readonly Dictionary<Control, InputVisualState> _invalidInputStates = new();
 
         /// <summary>任务配置页当前选择的规范索引，供系统设置页自动绑定使用。</summary>
         public int SelectedStandardIndex => Math.Clamp(StandardComboBox.SelectedIndex, 0, 1);
@@ -30,6 +31,10 @@ namespace UpperComInspectionInstrument2022.Views
             InitializeComponent();
             _loading = true;
             SensorTypeComboBox.ItemsSource = TemperatureSensorCatalog.DisplayNames;
+            TemperaturePointCountComboBox.ItemsSource = Enumerable.Range(
+                1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount).ToList();
+            HumidityPointCountComboBox.ItemsSource = Enumerable.Range(
+                1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount).ToList();
             StandardComboBox.SelectedIndex = Math.Clamp(CalibrationTaskContext.StandardIndex, 0, 1);
             ConfigureStandardChoices(StandardComboBox.SelectedIndex, false);
             VolumeComboBox.SelectedIndex = CalibrationTaskContext.IsConfigured && CalibrationTaskContext.VolumeIndex is >= 0 and <= 1
@@ -83,8 +88,8 @@ namespace UpperComInspectionInstrument2022.Views
             WorkZoneHeightTextBox.Text = FormatOptional(CalibrationTaskContext.WorkZoneHeightMm);
             SetTemperatureTextBox.Text = CalibrationTaskContext.SetTemperature?.ToString("0.###") ?? string.Empty;
             SetHumidityTextBox.Text = CalibrationTaskContext.SetHumidity?.ToString("0.###") ?? string.Empty;
-            TemperaturePointCountTextBox.Text = CalibrationTaskContext.TemperaturePointCount.ToString();
-            HumidityPointCountTextBox.Text = CalibrationTaskContext.HumidityPointCount.ToString();
+            SelectPointCount(TemperaturePointCountComboBox, CalibrationTaskContext.TemperaturePointCount);
+            SelectPointCount(HumidityPointCountComboBox, CalibrationTaskContext.HumidityPointCount);
             TemperatureCenterPointTextBox.Text = CalibrationTaskContext.TemperatureCenterPoint.ToString();
             HumidityCenterPointTextBox.Text = CalibrationTaskContext.HumidityCenterPoint.ToString();
             PointLayoutDescriptionTextBox.Text = CalibrationTaskContext.PointLayoutDescription;
@@ -177,6 +182,26 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>
+        /// 自定义测点数变化时同步收敛中心点和通道映射，避免保留大于新点数的旧中心点或旧绑定。
+        /// </summary>
+        private void PointCountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_loading) return;
+            if (ReferenceEquals(sender, TemperaturePointCountComboBox) &&
+                TryGetPointCount(TemperaturePointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int temperatureCount))
+            {
+                ClampCenterPoint(TemperatureCenterPointTextBox, temperatureCount);
+            }
+            else if (ReferenceEquals(sender, HumidityPointCountComboBox) &&
+                     TryGetPointCount(HumidityPointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out int humidityCount))
+            {
+                ClampCenterPoint(HumidityCenterPointTextBox, humidityCount);
+            }
+
+            UpdateChannelMappingSummary();
+        }
+
+        /// <summary>
         /// 切换正式采样计划。规范模式立即恢复规范默认值并锁定输入；自定义模式保留当前值供用户调整。
         /// </summary>
         private void SamplingPlanModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -248,8 +273,8 @@ namespace UpperComInspectionInstrument2022.Views
                     StandardComboBox.SelectedIndex, 0, includesHumidity);
                 if (applyDefaults)
                 {
-                    TemperaturePointCountTextBox.Text = string.Empty;
-                    HumidityPointCountTextBox.Text = includesHumidity ? string.Empty : "0";
+                    TemperaturePointCountComboBox.SelectedIndex = -1;
+                    HumidityPointCountComboBox.SelectedIndex = -1;
                     TemperatureCenterPointTextBox.Text = string.Empty;
                     HumidityCenterPointTextBox.Text = includesHumidity ? string.Empty : "0";
                     StableWaitTextBox.Text = pendingRule.StableWaitMinutes.ToString();
@@ -259,8 +284,8 @@ namespace UpperComInspectionInstrument2022.Views
                 RuleScopeTextBlock.Text = $"{pendingRule.ScopeText}\n{pendingRule.EnvironmentRuleText}";
                 RulePlanTextBlock.Text = $"校准点方案：{CalibrationStandardRuleService.GetCalibrationPointRuleText(pendingRule, PointSelectionComboBox.SelectedIndex)}\n请先选择实际容积，软件再生成空间测点数量、中心点和布点说明。";
                 RuleStabilityTextBlock.Text = $"{pendingRule.StabilityRuleText}\n输出：{pendingRule.ResultItemsText}";
-                TemperaturePointCountTextBox.IsReadOnly = true;
-                HumidityPointCountTextBox.IsReadOnly = true;
+                TemperaturePointCountComboBox.IsEnabled = false;
+                HumidityPointCountComboBox.IsEnabled = false;
                 TemperatureCenterPointTextBox.IsReadOnly = true;
                 HumidityCenterPointTextBox.IsReadOnly = true;
                 PointLayoutDescriptionTextBox.IsReadOnly = true;
@@ -275,8 +300,8 @@ namespace UpperComInspectionInstrument2022.Views
 
             if (applyDefaults)
             {
-                TemperaturePointCountTextBox.Text = rule.TemperaturePointCount.ToString();
-                HumidityPointCountTextBox.Text = rule.HumidityPointCount.ToString();
+                SelectPointCount(TemperaturePointCountComboBox, rule.TemperaturePointCount);
+                SelectPointCount(HumidityPointCountComboBox, rule.HumidityPointCount);
                 TemperatureCenterPointTextBox.Text = rule.TemperatureCenterPoint.ToString();
                 HumidityCenterPointTextBox.Text = Math.Max(1, rule.HumidityCenterPoint).ToString();
                 StableWaitTextBox.Text = rule.StableWaitMinutes.ToString();
@@ -291,8 +316,8 @@ namespace UpperComInspectionInstrument2022.Views
 
             bool customPointInput = CalibrationStandardRuleService.AllowsCustomPointInput(
                 rule, PointLayoutModeComboBox.SelectedIndex);
-            TemperaturePointCountTextBox.IsReadOnly = !customPointInput;
-            HumidityPointCountTextBox.IsReadOnly = !customPointInput;
+            TemperaturePointCountComboBox.IsEnabled = customPointInput;
+            HumidityPointCountComboBox.IsEnabled = customPointInput;
             TemperatureCenterPointTextBox.IsReadOnly = !customPointInput;
             // O 是规范中的空间位置；它映射到巡检仪哪个湿度通道取决于现场接线，始终允许确认/修改。
             HumidityCenterPointTextBox.IsReadOnly = false;
@@ -303,58 +328,25 @@ namespace UpperComInspectionInstrument2022.Views
             UpdateChannelMappingSummary();
         }
 
-        /// <summary>打开逻辑测点与物理接口绑定窗口；绑定只保存在当前任务中，不直接改写巡检仪。</summary>
-        private void ConfigureChannelMappingButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!TryParseInt(TemperaturePointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int temperatureCount))
-            {
-                ShowInputError("请先填写有效的温度空间测点数。", TemperaturePointCountTextBox);
-                return;
-            }
-
-            int humidityCount = 0;
-            bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
-            if (includesHumidity &&
-                !TryParseInt(HumidityPointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out humidityCount))
-            {
-                ShowInputError("请先填写有效的湿度空间测点数。", HumidityPointCountTextBox);
-                return;
-            }
-
-            ChannelMappingWindow window = new(
-                temperatureCount,
-                humidityCount,
-                _temperatureChannelMapping,
-                _humidityChannelMapping)
-            {
-                Owner = Window.GetWindow(this)
-            };
-            if (window.ShowDialog() != true) return;
-
-            _temperatureChannelMapping = window.TemperatureMapping.ToList();
-            _humidityChannelMapping = window.HumidityMapping.ToList();
-            UpdateChannelMappingSummary();
-            TaskStatusTextBlock.Text = "通道绑定已修改，保存任务后生效";
-            TaskStatusTextBlock.Foreground = Brushes.DarkOrange;
-        }
-
         /// <summary>按页面当前点数修复映射并显示紧凑摘要。</summary>
         private void UpdateChannelMappingSummary()
         {
             if (ChannelMappingSummaryTextBlock == null) return;
-            int temperatureCount = int.TryParse(TemperaturePointCountTextBox.Text, out int parsedTemperature)
-                ? Math.Clamp(parsedTemperature, 0, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount)
-                : 0;
+            int temperatureCount = TryGetPointCount(
+                TemperaturePointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int parsedTemperature)
+                ? parsedTemperature : 0;
             bool includesHumidity = StandardComboBox.SelectedIndex == 0 && CalibrationTypeComboBox.SelectedIndex == 1;
-            int humidityCount = includesHumidity && int.TryParse(HumidityPointCountTextBox.Text, out int parsedHumidity)
-                ? Math.Clamp(parsedHumidity, 0, InspectionInstrumentProtocol.PhysicalHumidityChannelCount)
-                : 0;
+            int humidityCount = includesHumidity && TryGetPointCount(
+                HumidityPointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out int parsedHumidity)
+                ? parsedHumidity : 0;
             _temperatureChannelMapping = MeasurementChannelMappingService.Normalize(
                 _temperatureChannelMapping, temperatureCount, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount);
             _humidityChannelMapping = MeasurementChannelMappingService.Normalize(
                 _humidityChannelMapping, humidityCount, InspectionInstrumentProtocol.PhysicalHumidityChannelCount);
             string summary = MeasurementChannelMappingService.FormatSummary(_temperatureChannelMapping, _humidityChannelMapping);
-            ChannelMappingSummaryTextBlock.Text = string.IsNullOrWhiteSpace(summary) ? "请先选择规范、容积和测点数" : summary;
+            ChannelMappingSummaryTextBlock.Text = string.IsNullOrWhiteSpace(summary)
+                ? "请先选择规范、容积和测点数；保存任务后到校准工作台配置实际设备接口。"
+                : $"当前默认：{summary}。保存任务后，到校准工作台“设备通道配置”中按实际接线调整并应用。";
         }
 
         /// <summary>
@@ -422,7 +414,7 @@ namespace UpperComInspectionInstrument2022.Views
             SetHumidityLabel.Visibility = humidityVisibility;
             SetHumidityTextBox.Visibility = humidityVisibility;
             HumidityPointCountLabel.Visibility = humidityVisibility;
-            HumidityPointCountTextBox.Visibility = humidityVisibility;
+            HumidityPointCountComboBox.Visibility = humidityVisibility;
             HumidityCenterPointLabel.Visibility = humidityVisibility;
             HumidityCenterPointTextBox.Visibility = humidityVisibility;
             DutHumidityResolutionLabel.Visibility = humidityVisibility;
@@ -475,6 +467,7 @@ namespace UpperComInspectionInstrument2022.Views
         /// </summary>
         private void StartCalibrationButton_Click(object sender, RoutedEventArgs e)
         {
+            ClearAllInputErrors();
             if (StandardComboBox.SelectedIndex < 0 || CalibrationTypeComboBox.SelectedIndex < 0 || PointSelectionComboBox.SelectedIndex < 0)
             {
                 ShowInputError("请选择校准规范、校准项目和校准点方案。", StandardComboBox);
@@ -538,25 +531,66 @@ namespace UpperComInspectionInstrument2022.Views
                 return;
             }
 
-            if (!TryParseInt(TemperaturePointCountTextBox.Text, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out int temperatureCount) ||
-                !TryParseInt(HumidityPointCountTextBox.Text, 0, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out int humidityCount) ||
-                !TryParseInt(TemperatureCenterPointTextBox.Text, 1, temperatureCount, out int temperatureCenter) ||
-                (includesHumidity && !TryParseInt(HumidityCenterPointTextBox.Text, 1, humidityCount, out _)) ||
-                !TryParseInt(PlannedCountTextBox.Text, 1, 10000, out int plannedCount) ||
-                !TryParseInt(SamplingIntervalTextBox.Text, 1, 86400, out int samplingInterval) ||
-                !TryParseDouble(DutTemperatureResolutionTextBox.Text, 0.000001, 1000, out double dutTemperatureResolution) ||
-                (includesHumidity && !TryParseDouble(DutHumidityResolutionTextBox.Text, 0.000001, 100, out _)))
+            int temperatureCount = 0;
+            int humidityCount = 0;
+            int temperatureCenter = 0;
+            int humidityCenter = 0;
+            int plannedCount = 0;
+            int samplingInterval = 0;
+            double dutTemperatureResolution = 0;
+            double dutHumidityResolution = 0;
+            var invalidTaskFields = new List<(Control Control, string Name)>();
+            bool temperatureCountValid = TryGetPointCount(
+                TemperaturePointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount, out temperatureCount);
+            if (!temperatureCountValid) invalidTaskFields.Add((TemperaturePointCountComboBox, "温度空间测点数"));
+
+            bool humidityCountValid = !includesHumidity || TryGetPointCount(
+                HumidityPointCountComboBox, 1, InspectionInstrumentProtocol.PhysicalHumidityChannelCount, out humidityCount);
+            if (!includesHumidity) humidityCount = 0;
+            if (!humidityCountValid) invalidTaskFields.Add((HumidityPointCountComboBox, "湿度空间测点数"));
+
+            bool temperatureCenterValid = temperatureCountValid &&
+                                          TryParseInt(TemperatureCenterPointTextBox.Text, 1, temperatureCount, out temperatureCenter);
+            if (!temperatureCenterValid) invalidTaskFields.Add((TemperatureCenterPointTextBox, "温度中心点"));
+
+            bool humidityCenterValid = !includesHumidity ||
+                                       (humidityCountValid &&
+                                        TryParseInt(HumidityCenterPointTextBox.Text, 1, humidityCount, out humidityCenter));
+            if (!humidityCenterValid) invalidTaskFields.Add((HumidityCenterPointTextBox, "湿度 O 对应通道"));
+
+            if (!TryParseInt(PlannedCountTextBox.Text, 1, 10000, out plannedCount))
+                invalidTaskFields.Add((PlannedCountTextBox, "正式样本数"));
+            if (!TryParseInt(SamplingIntervalTextBox.Text, 1, 86400, out samplingInterval))
+                invalidTaskFields.Add((SamplingIntervalTextBox, "正式采样间隔"));
+            if (!TryParseDouble(DutTemperatureResolutionTextBox.Text, 0.000001, 1000, out dutTemperatureResolution))
+                invalidTaskFields.Add((DutTemperatureResolutionTextBox, "被校温度分辨力"));
+            if (includesHumidity &&
+                !TryParseDouble(DutHumidityResolutionTextBox.Text, 0.000001, 100, out dutHumidityResolution))
+                invalidTaskFields.Add((DutHumidityResolutionTextBox, "被校湿度分辨力"));
+
+            if (invalidTaskFields.Count > 0)
             {
-                MessageBox.Show("请检查测点数、中心点、被校设备分辨力和正式采样计划。", "任务参数不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                string fieldNames = string.Join("、", invalidTaskFields.Select(item => item.Name));
+                ShowInputErrors(
+                    $"以下参数缺失或超出允许范围：\n{fieldNames}\n\n关闭提示后将定位到第一个错误项，红色边框字段需要修改。",
+                    "任务参数不完整",
+                    invalidTaskFields.Select(item => item.Control));
                 return;
             }
-            int humidityCenter = includesHumidity ? int.Parse(HumidityCenterPointTextBox.Text.Trim()) : 0;
-            double dutHumidityResolution = includesHumidity ? double.Parse(DutHumidityResolutionTextBox.Text.Trim()) : 0;
 
-            if (!TryParseDouble(AmbientTemperatureTextBox.Text, rule.MinimumAmbientTemperature, rule.MaximumAmbientTemperature, out double ambientTemperature) ||
-                !TryParseDouble(AmbientHumidityTextBox.Text, 0, rule.MaximumAmbientHumidity, out double ambientHumidity))
+            bool ambientTemperatureValid = TryParseDouble(
+                AmbientTemperatureTextBox.Text, rule.MinimumAmbientTemperature, rule.MaximumAmbientTemperature, out double ambientTemperature);
+            bool ambientHumidityValid = TryParseDouble(
+                AmbientHumidityTextBox.Text, 0, rule.MaximumAmbientHumidity, out double ambientHumidity);
+            if (!ambientTemperatureValid || !ambientHumidityValid)
             {
-                MessageBox.Show($"现场环境必须满足：温度 {rule.MinimumAmbientTemperature:0} ℃～{rule.MaximumAmbientTemperature:0} ℃，湿度不大于 {rule.MaximumAmbientHumidity:0} %RH。", "环境条件不满足规范", MessageBoxButton.OK, MessageBoxImage.Warning);
+                var controls = new List<Control>();
+                if (!ambientTemperatureValid) controls.Add(AmbientTemperatureTextBox);
+                if (!ambientHumidityValid) controls.Add(AmbientHumidityTextBox);
+                ShowInputErrors(
+                    $"现场环境必须满足：温度 {rule.MinimumAmbientTemperature:0} ℃～{rule.MaximumAmbientTemperature:0} ℃，湿度不大于 {rule.MaximumAmbientHumidity:0} %RH。",
+                    "环境条件不满足规范",
+                    controls);
                 return;
             }
             double? ambientPressure = null;
@@ -576,12 +610,15 @@ namespace UpperComInspectionInstrument2022.Views
             if (!customPointInput &&
                 (temperatureCount != rule.TemperaturePointCount || humidityCount != rule.HumidityPointCount))
             {
-                MessageBox.Show("当前布点模式使用规范自动生成的测点数量；如需修改，请选择带“点数可自定义”的布点方式，并填写布点说明。", "布点不符合选择", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowInputErrors(
+                    "当前布点模式使用规范自动生成的测点数量；如需修改，请选择带“点数可自定义”的布点方式，并填写布点说明。",
+                    "布点不符合选择",
+                    new Control[] { TemperaturePointCountComboBox, HumidityPointCountComboBox });
                 return;
             }
             if (!customPointInput && temperatureCenter != rule.TemperatureCenterPoint)
             {
-                MessageBox.Show("规范默认布点的温度中心/监控点不能改变；如需调整空间位置，请选择对应的调整方式并填写说明。", "中心点不符合选择", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowInputError("规范默认布点的温度中心/监控点不能改变；如需调整空间位置，请选择对应的调整方式并填写说明。", TemperatureCenterPointTextBox, "中心点不符合选择");
                 return;
             }
             if (customPointInput && string.IsNullOrWhiteSpace(PointLayoutDescriptionTextBox.Text))
@@ -624,8 +661,10 @@ namespace UpperComInspectionInstrument2022.Views
             if (SamplingPlanModeComboBox.SelectedIndex == 0 &&
                 (plannedCount != rule.SampleCount || samplingInterval != rule.SampleIntervalSeconds))
             {
-                MessageBox.Show("按规范采样计划时，样本数和采样间隔必须使用规范默认值；如需调整，请切换为自定义采样计划。",
-                    "采样计划不一致", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowInputErrors(
+                    "按规范采样计划时，样本数和采样间隔必须使用规范默认值；如需调整，请切换为自定义采样计划。",
+                    "采样计划不一致",
+                    new Control[] { PlannedCountTextBox, SamplingIntervalTextBox });
                 return;
             }
             if (StandardComboBox.SelectedIndex == CalibrationStandardRuleService.Jjf1376Index && plannedCount < 20)
@@ -748,12 +787,86 @@ namespace UpperComInspectionInstrument2022.Views
             CalibrationTaskContext.Save();
         }
 
-        /// <summary>显示统一输入警告，并把焦点移到需要修正的控件。</summary>
-        private static void ShowInputError(string message, Control control)
+        /// <summary>显示单项输入警告，并在关闭弹窗后定位、聚焦和红框标记对应控件。</summary>
+        private void ShowInputError(string message, Control control, string title = "输入检查") =>
+            ShowInputErrors(message, title, new[] { control });
+
+        /// <summary>
+        /// 同时标记一组错误字段；弹窗关闭后把滚动区域定位到第一个可见字段。
+        /// 字段内容发生变化时立即恢复原边框，避免用户修正后仍看到过期错误状态。
+        /// </summary>
+        private void ShowInputErrors(string message, string title, IEnumerable<Control> controls)
         {
-            MessageBox.Show(message, "输入检查", MessageBoxButton.OK, MessageBoxImage.Warning);
-            control.Focus();
+            List<Control> invalidControls = controls
+                .Where(control => control != null && control.IsVisible)
+                .Distinct()
+                .ToList();
+            if (invalidControls.Count == 0)
+                invalidControls = controls.Where(control => control != null).Distinct().ToList();
+
+            foreach (Control control in invalidControls)
+                MarkInputError(control);
+
+            MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            Control? first = invalidControls.FirstOrDefault();
+            if (first == null) return;
+
+            TaskScrollViewer.UpdateLayout();
+            first.BringIntoView(new Rect(0, 0, Math.Max(1, first.ActualWidth), Math.Max(1, first.ActualHeight)));
+            TaskScrollViewer.UpdateLayout();
+            first.Focus();
+            if (first is TextBox textBox)
+                textBox.SelectAll();
+            else if (first is ComboBox comboBox)
+                comboBox.IsDropDownOpen = false;
         }
+
+        /// <summary>保存控件原视觉状态并应用醒目的错误边框。</summary>
+        private void MarkInputError(Control control)
+        {
+            if (!_invalidInputStates.ContainsKey(control))
+            {
+                _invalidInputStates.Add(control, new InputVisualState(control.BorderBrush, control.BorderThickness));
+                if (control is TextBox textBox)
+                    textBox.TextChanged += InvalidTextBox_TextChanged;
+                else if (control is ComboBox comboBox)
+                    comboBox.SelectionChanged += InvalidComboBox_SelectionChanged;
+            }
+
+            control.BorderBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
+            control.BorderThickness = new Thickness(2);
+        }
+
+        private void InvalidTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is Control control) ClearInputError(control);
+        }
+
+        private void InvalidComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is Control control) ClearInputError(control);
+        }
+
+        /// <summary>字段被编辑后恢复进入错误状态前的边框，并解除临时事件订阅。</summary>
+        private void ClearInputError(Control control)
+        {
+            if (!_invalidInputStates.Remove(control, out InputVisualState? state)) return;
+            control.BorderBrush = state.BorderBrush;
+            control.BorderThickness = state.BorderThickness;
+            if (control is TextBox textBox)
+                textBox.TextChanged -= InvalidTextBox_TextChanged;
+            else if (control is ComboBox comboBox)
+                comboBox.SelectionChanged -= InvalidComboBox_SelectionChanged;
+        }
+
+        /// <summary>每次重新提交前清理上一次校验留下的视觉状态，再按当前值重新标记。</summary>
+        private void ClearAllInputErrors()
+        {
+            foreach (Control control in _invalidInputStates.Keys.ToList())
+                ClearInputError(control);
+        }
+
+        private sealed record InputVisualState(Brush? BorderBrush, Thickness BorderThickness);
 
         /// <summary>把可空数显示为简洁文本，空值保持空白。</summary>
         private static string FormatOptional(double? value) => value?.ToString("0.###") ?? string.Empty;
@@ -762,6 +875,26 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>读取可选正数，空白或非法输入返回空值。</summary>
         private static double? ParseOptionalPositiveDouble(string text) =>
             double.TryParse(text.Trim(), out double value) && double.IsFinite(value) && value > 0 ? value : null;
+
+        /// <summary>从有限选项中恢复测点数；0 表示当前任务不使用该参数。</summary>
+        private static void SelectPointCount(ComboBox comboBox, int value)
+        {
+            comboBox.SelectedItem = value > 0 ? value : null;
+        }
+
+        /// <summary>读取并校验测点数下拉框，避免自由文本产生空值、非数字或越界数据。</summary>
+        private static bool TryGetPointCount(ComboBox comboBox, int min, int max, out int value)
+        {
+            value = comboBox.SelectedItem is int selected ? selected : 0;
+            return value >= min && value <= max;
+        }
+
+        /// <summary>缩小测点数时同步收敛原中心点，避免留下超出新点数的无效序号。</summary>
+        private static void ClampCenterPoint(TextBox centerPointTextBox, int pointCount)
+        {
+            if (int.TryParse(centerPointTextBox.Text.Trim(), out int centerPoint) && centerPoint > pointCount)
+                centerPointTextBox.Text = pointCount.ToString();
+        }
 
         /// <summary>
         /// 用长度×宽度×高度计算工作区体积并从 mm³ 换算为 m³；尺寸不完整时返回空值。

@@ -28,6 +28,7 @@ namespace UpperComInspectionInstrument2022.Views
         private readonly InspectionDataAcquisitionService _acquisitionService;
         private readonly ModbusRtuClient _modbusClient;
         private readonly InspectionInstrumentRunStateService _runStateService;
+        private readonly InspectionInstrumentStatusService _instrumentStatusService;
         private readonly InspectionInstrumentConfigurationService _instrumentConfigurationService;
         private readonly InspectionInstrumentChannelProfileService _channelProfileService;
         private readonly RealtimeMeasurementFileStorageService _realtimeStorageService;
@@ -52,6 +53,13 @@ namespace UpperComInspectionInstrument2022.Views
         };
         private Rect _chartPlotArea = Rect.Empty;
         private Line? _chartCursorLine;
+        private static readonly TimeSpan BatteryRefreshInterval = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan BatteryFailureRetryInterval = TimeSpan.FromSeconds(15);
+        private DateTime _nextBatteryRefreshAtUtc = DateTime.MinValue;
+        private int? _remainingBatteryPercentage;
+        private byte _activeSlaveAddress = 1;
+        private bool[]? _activeChannelEnabled;
+        private bool _deviceTransitionInProgress;
 
         /// <summary>当前是否正在执行正式校准采样；系统设置据此决定是否允许刷新任务快照。</summary>
         public bool IsFormalCalibrationRunning => _calibrationRunning;
@@ -65,6 +73,7 @@ namespace UpperComInspectionInstrument2022.Views
             _acquisitionService = acquisitionService ?? throw new ArgumentNullException(nameof(acquisitionService));
             _modbusClient = modbusClient ?? throw new ArgumentNullException(nameof(modbusClient));
             _runStateService = new InspectionInstrumentRunStateService(_modbusClient);
+            _instrumentStatusService = new InspectionInstrumentStatusService(_modbusClient);
             _instrumentConfigurationService = new InspectionInstrumentConfigurationService(_modbusClient);
             _channelProfileService = InspectionInstrumentChannelProfileService.Default;
             _realtimeStorageService = RealtimeMeasurementFileStorageService.Default;
@@ -209,7 +218,9 @@ namespace UpperComInspectionInstrument2022.Views
                 CalibrationTaskContext.HumidityCenterPoint,
                 CalibrationTaskContext.SensorTypeCode,
                 CalibrationTaskContext.SetTemperature,
-                CalibrationTaskContext.SetHumidity);
+                CalibrationTaskContext.SetHumidity,
+                string.Join(",", CalibrationTaskContext.TemperatureChannelMapping),
+                string.Join(",", CalibrationTaskContext.HumidityChannelMapping));
         }
 
         /// <summary>按规范稳定依据显示计时确认或人工稳定确认控件。</summary>
@@ -559,6 +570,7 @@ namespace UpperComInspectionInstrument2022.Views
         /// </summary>
         private static string FormatMeasurementMatrixValue(InspectionChannelData channel)
         {
+            if (channel.DataStatus == DataStatus.Disabled) return "关闭";
             if (channel.IsValid) return channel.Value.ToString("F2", CultureInfo.InvariantCulture);
             if (channel.Role == ChannelRole.Humidity && double.IsFinite(channel.Value))
                 return $"{channel.Value.ToString("F2", CultureInfo.InvariantCulture)}（异常）";
@@ -567,8 +579,12 @@ namespace UpperComInspectionInstrument2022.Views
         }
 
         /// <summary>连接或断开巡检仪串口；连接成功只表示端口已打开，收到有效响应后才显示设备已响应。</summary>
-        private void ConnectDeviceButton_Click(object sender, RoutedEventArgs e)
+        private async void ConnectDeviceButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_deviceTransitionInProgress) return;
+            _deviceTransitionInProgress = true;
+            ConnectDeviceButton.IsEnabled = false;
+            ChannelConfigurationButton.IsEnabled = false;
             try
             {
                 if (_modbusClient.IsOpen)
@@ -577,6 +593,10 @@ namespace UpperComInspectionInstrument2022.Views
                     _modbusClient.Close();
                     _deviceResponding = false;
                     _requiredChannelsValid = false;
+                    _remainingBatteryPercentage = null;
+                    _nextBatteryRefreshAtUtc = DateTime.MinValue;
+                    BatteryLevelTextBlock.Text = "剩余电量：未连接";
+                    BatteryLevelTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                     StartAcquisitionButton.IsEnabled = false;
                     PortComboBox.IsEnabled = true;
                     BaudRateComboBox.IsEnabled = true;
@@ -593,14 +613,29 @@ namespace UpperComInspectionInstrument2022.Views
                 if (!_modbusClient.IsOpen || !string.Equals(_modbusClient.PortName, portName, StringComparison.OrdinalIgnoreCase))
                     _modbusClient.Open(portName, baudRate);
 
-                ConnectDeviceButton.IsEnabled = true;
-                StartAcquisitionButton.IsEnabled = true;
+                ConnectDeviceButton.IsEnabled = false;
+                StartAcquisitionButton.IsEnabled = false;
                 PortComboBox.IsEnabled = false;
                 BaudRateComboBox.IsEnabled = false;
                 StatusTextBlock.Text = "串口已打开，点击开始实时测量";
+                _remainingBatteryPercentage = null;
+                _nextBatteryRefreshAtUtc = DateTime.MinValue;
+                BatteryLevelTextBlock.Text = "剩余电量：等待设备响应";
+                BatteryLevelTextBlock.Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 UpdateConnectionStatus();
                 WriteOperation("连接巡检仪", "成功", $"串口 {portName}，波特率 {baudRate}", string.Empty);
                 WriteRuntime("信息", "通信", "打开串口", $"串口 {portName}，波特率 {baudRate}");
+
+                // 打开串口后立即执行一次只读电量查询，使用户不必先启动实时测量才能看到状态。
+                // 查询失败不会判定连接失败；正式测量仍可继续尝试与设备通信。
+                if (byte.TryParse(SlaveAddressTextBox.Text.Trim(), out byte batterySlaveAddress) &&
+                    batterySlaveAddress is >= 1 and <= 247)
+                {
+                    _activeSlaveAddress = batterySlaveAddress;
+                    await System.Threading.Tasks.Task.Run(() => TryRefreshRemainingBattery(batterySlaveAddress));
+                }
+                ConnectDeviceButton.IsEnabled = true;
+                StartAcquisitionButton.IsEnabled = _modbusClient.IsOpen;
             }
             catch (UnauthorizedAccessException)
             {
@@ -616,6 +651,16 @@ namespace UpperComInspectionInstrument2022.Views
                 WriteRuntime("错误", "通信", "打开串口失败", ex.Message);
                 MessageBox.Show(ex.Message, "连接巡检仪失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            finally
+            {
+                _deviceTransitionInProgress = false;
+                UpdateConnectionStatus();
+                if (!_acquisitionService.IsRunning)
+                {
+                    ConnectDeviceButton.IsEnabled = true;
+                    StartAcquisitionButton.IsEnabled = _modbusClient.IsOpen;
+                }
+            }
         }
 
         /// <summary>
@@ -623,6 +668,11 @@ namespace UpperComInspectionInstrument2022.Views
         /// </summary>
         private async void StartAcquisitionButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_deviceTransitionInProgress) return;
+            _deviceTransitionInProgress = true;
+            ConnectDeviceButton.IsEnabled = false;
+            StartAcquisitionButton.IsEnabled = false;
+            ChannelConfigurationButton.IsEnabled = false;
             bool realtimeSessionStarted = false;
             try
             {
@@ -630,6 +680,7 @@ namespace UpperComInspectionInstrument2022.Views
                     throw new InvalidOperationException("没有选择可用串口，请先刷新并选择巡检仪端口。");
                 if (!byte.TryParse(SlaveAddressTextBox.Text.Trim(), out byte slaveAddress) || slaveAddress == 0 || slaveAddress > 247)
                     throw new InvalidOperationException("从站地址必须是 1~247 的整数。");
+                _activeSlaveAddress = slaveAddress;
                 if (!int.TryParse(IntervalTextBox.Text.Trim(), out int interval) || interval < 200)
                     throw new InvalidOperationException("读取周期不能小于 200 ms。");
                 if (HasTemperatureMode() && GetPointCount(TemperaturePointCountComboBox) < 1)
@@ -678,7 +729,35 @@ namespace UpperComInspectionInstrument2022.Views
                 // 通道配置会停止巡检仪本机扫描，而测量保持寄存器仍保留最后一次值。
                 // 因此不能用“寄存器可读”代替“设备正在采集”；启动上位机循环前必须恢复并确认运行状态。
                 StatusTextBlock.Text = "正在启动巡检仪并确认传感器采集状态……";
-                await System.Threading.Tasks.Task.Run(() => _runStateService.EnsureStarted(slaveAddress));
+                string? startCheckError = await System.Threading.Tasks.Task.Run(() =>
+                    CaptureExpectedDeviceError(() => _runStateService.EnsureStarted(slaveAddress)));
+                if (!string.IsNullOrWhiteSpace(startCheckError))
+                    throw new InvalidOperationException(startCheckError);
+
+                // 巡检仪关闭物理通道后不会清空测量寄存器，寄存器仍会返回关闭前的最后值。
+                // 使用上位机最后一次成功写入并读回确认的快照，把这些缓存值排除在实时显示和校准计算之外。
+                _activeChannelEnabled = null;
+                if (_channelProfileService.TryLoad(
+                        portName,
+                        slaveAddress,
+                        out bool[] savedChannelEnabled,
+                        out DateTime channelProfileSavedAt,
+                        out string channelProfileError))
+                {
+                    _activeChannelEnabled = savedChannelEnabled;
+                    string disabledChannels = MeasurementChannelEnableService.FormatDisabledChannels(savedChannelEnabled);
+                    WriteRuntime(
+                        "信息",
+                        "通道配置",
+                        "应用通道使能快照",
+                        string.IsNullOrWhiteSpace(disabledChannels)
+                            ? $"使用 {channelProfileSavedAt:yyyy-MM-dd HH:mm:ss} 保存的配置，33路通道均启用"
+                            : $"使用 {channelProfileSavedAt:yyyy-MM-dd HH:mm:ss} 保存的配置；关闭通道：{disabledChannels}");
+                }
+                else if (!string.IsNullOrWhiteSpace(channelProfileError))
+                {
+                    WriteRuntime("警告", "通道配置", "无法应用通道使能快照", channelProfileError);
+                }
 
                 string calibrationType = (CalibrationTypeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "温度";
                 if (SaveRealtimeRecordCheckBox.IsChecked == true)
@@ -736,6 +815,32 @@ namespace UpperComInspectionInstrument2022.Views
                 WriteOperation("开始实时测量", "失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
                 WriteRuntime("错误", "采集", "启动实时测量失败", ex.Message, _realtimeStorageService.CurrentSessionDirectory ?? string.Empty);
                 MessageBox.Show(ex.Message, "启动实时测量失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                _deviceTransitionInProgress = false;
+                UpdateConnectionStatus();
+                if (!_acquisitionService.IsRunning)
+                {
+                    ConnectDeviceButton.IsEnabled = true;
+                    StartAcquisitionButton.IsEnabled = _modbusClient.IsOpen;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 在后台线程内部把可预期的设备通信异常转换为错误文本，避免异常跨越 Task 边界后被调试器误判为用户未处理。
+        /// </summary>
+        private static string? CaptureExpectedDeviceError(Action operation)
+        {
+            try
+            {
+                operation();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
             }
         }
 
@@ -1186,6 +1291,9 @@ namespace UpperComInspectionInstrument2022.Views
             }
             Dispatcher.Invoke(() =>
             {
+                // 必须先按物理接口应用使能快照，再进行修正和逻辑测点映射。
+                // 否则关闭通道寄存器中的历史保留值会被误当作实时有效值并进入报告。
+                MeasurementChannelEnableService.Apply(data, _activeChannelEnabled);
                 // 普通实时测量跟随最新系统设置；正式采样锁定任务快照，且 RawValue 始终保留修正前值。
                 ChannelCorrectionService.ApplyForMeasurement(data,
                     _calibrationRunning,
@@ -1335,6 +1443,48 @@ namespace UpperComInspectionInstrument2022.Views
                     PublishGlobalRunStatus($"{_modbusClient.PortName} · 实时测量 {_viewModel.AcquisitionCount} 组", GlobalRunStatusTone.Active);
                 }
             });
+
+            // 电量属于慢变化辅助状态。每分钟最多附加一次短请求，并在本轮测量事务完整结束后执行，
+            // 避免与温度、湿度请求并发访问串口。读取失败不会向采集循环抛出异常。
+            TryRefreshRemainingBattery(_activeSlaveAddress);
+        }
+
+        /// <summary>
+        /// 低频刷新巡检仪剩余电量。该方法运行在采集工作线程，使用与测量相同的串口事务锁，
+        /// 因此不会产生两个Modbus请求交叠；任何失败都只更新提示并写入日志。
+        /// </summary>
+        private void TryRefreshRemainingBattery(byte slaveAddress)
+        {
+            DateTime nowUtc = DateTime.UtcNow;
+            if (nowUtc < _nextBatteryRefreshAtUtc) return;
+
+            try
+            {
+                int percentage = _instrumentStatusService.ReadRemainingBatteryPercentage(slaveAddress);
+                _remainingBatteryPercentage = percentage;
+                _deviceResponding = true;
+                _nextBatteryRefreshAtUtc = DateTime.UtcNow.Add(BatteryRefreshInterval);
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_modbusClient.IsOpen) return;
+                    BatteryLevelTextBlock.Text = $"剩余电量：{percentage}%";
+                    BatteryLevelTextBlock.Foreground = percentage <= 20 ? Brushes.DarkOrange : Brushes.DarkGreen;
+                    UpdateConnectionStatus();
+                });
+            }
+            catch (Exception ex)
+            {
+                _nextBatteryRefreshAtUtc = DateTime.UtcNow.Add(BatteryFailureRetryInterval);
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_modbusClient.IsOpen) return;
+                    BatteryLevelTextBlock.Text = _remainingBatteryPercentage.HasValue
+                        ? $"剩余电量：{_remainingBatteryPercentage.Value}%（刷新失败）"
+                        : "剩余电量：未知";
+                    BatteryLevelTextBlock.Foreground = Brushes.DarkOrange;
+                });
+                WriteRuntime("警告", "通信", "读取剩余电量失败", ex.Message);
+            }
         }
 
         /// <summary>更新当前值、有效通道质量、中心点值和异常详情提示。</summary>
@@ -1358,6 +1508,11 @@ namespace UpperComInspectionInstrument2022.Views
             {
                 if (!channel.IsValid)
                 {
+                    if (channel.DataStatus == DataStatus.Disabled)
+                    {
+                        invalidDescriptions.Add($"{GetChannelDisplayName(channel)}：已关闭，不使用寄存器保留值");
+                        continue;
+                    }
                     string parsedValue = double.IsFinite(channel.Value)
                         ? $"{channel.Value:F2} {channel.Unit}"
                         : "不可解析";
@@ -1484,13 +1639,34 @@ namespace UpperComInspectionInstrument2022.Views
                 AddAverage(snapshot.Channels, ChannelType.Humidity, humidityPointCount, humidityAverages);
             }
 
-            double temperatureRange = CalculateRange(temperatureAverages);
-            double humidityRange = CalculateRange(humidityAverages);
-            bool temperatureStable = !hasTemperature || temperatureRange <= 0.2;
-            bool humidityStable = !hasHumidity || humidityRange <= 1.0;
+            const int requiredTrendSampleCount = 5;
+            double temperatureRange = 0;
+            double humidityRange = 0;
+            bool hasCompleteTemperatureTrend = !hasTemperature ||
+                                               TryCalculateRange(
+                                                   temperatureAverages,
+                                                   requiredTrendSampleCount,
+                                                   out temperatureRange);
+            bool hasCompleteHumidityTrend = !hasHumidity ||
+                                            TryCalculateRange(
+                                                humidityAverages,
+                                                requiredTrendSampleCount,
+                                                out humidityRange);
+            bool temperatureStable = !hasTemperature ||
+                                     (hasCompleteTemperatureTrend && temperatureRange <= 0.2);
+            bool humidityStable = !hasHumidity ||
+                                  (hasCompleteHumidityTrend && humidityRange <= 1.0);
             _trendLooksStable = temperatureStable && humidityStable;
-            string temperatureText = hasTemperature ? $"ΔT {temperatureRange:F3} ℃" : string.Empty;
-            string humidityText = hasHumidity ? $"ΔH {humidityRange:F3} %RH" : string.Empty;
+            string temperatureText = hasTemperature
+                ? hasCompleteTemperatureTrend
+                    ? $"ΔT {temperatureRange:F3} ℃"
+                    : $"ΔT 数据不足（{temperatureAverages.Count}/{requiredTrendSampleCount}）"
+                : string.Empty;
+            string humidityText = hasHumidity
+                ? hasCompleteHumidityTrend
+                    ? $"ΔH {humidityRange:F3} %RH"
+                    : $"ΔH 数据不足（{humidityAverages.Count}/{requiredTrendSampleCount}）"
+                : string.Empty;
             StabilityTextBlock.Text = $"近5组\n{temperatureText}{(hasTemperature && hasHumidity ? "\n" : string.Empty)}{humidityText}";
             StabilityTextBlock.Foreground = _trendLooksStable ? Brushes.DarkGreen : Brushes.DarkOrange;
             EvaluateFormalReadiness();
@@ -1504,20 +1680,28 @@ namespace UpperComInspectionInstrument2022.Views
             foreach (InspectionChannelData channel in MeasurementChannelSelectionService.SelectRequired(
                          channels, type, pointCount, true))
             {
+                if (!double.IsFinite(channel.Value)) return;
                 sum += channel.Value;
                 count++;
             }
             if (count == pointCount && count > 0) target.Add(sum / count);
         }
 
-        /// <summary>计算最大值与最小值之差；无有效值时返回正无穷表示不能判稳。</summary>
-        private static double CalculateRange(List<double> values)
+        /// <summary>只有取得指定数量的完整有限样本时才计算极差，避免缺测被显示成无穷或误判为零波动。</summary>
+        private static bool TryCalculateRange(IReadOnlyList<double> values, int requiredCount, out double range)
         {
-            if (values.Count == 0) return double.PositiveInfinity;
+            range = 0;
+            if (requiredCount <= 0 || values.Count < requiredCount) return false;
             double min = double.MaxValue;
             double max = double.MinValue;
-            foreach (double value in values) { min = Math.Min(min, value); max = Math.Max(max, value); }
-            return max - min;
+            foreach (double value in values)
+            {
+                if (!double.IsFinite(value)) return false;
+                min = Math.Min(min, value);
+                max = Math.Max(max, value);
+            }
+            range = max - min;
+            return double.IsFinite(range);
         }
 
         /// <summary>当前界面模式是否包含主温度通道。</summary>
@@ -1991,6 +2175,15 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>在串口已连接且采集停止时打开巡检仪物理通道配置。</summary>
         private void ChannelConfigurationButton_Click(object sender, RoutedEventArgs e)
         {
+            if (!CalibrationTaskContext.IsConfigured)
+            {
+                MessageBox.Show(
+                    "设备通道使能由当前任务测点绑定自动生成，请先完成任务配置。",
+                    "设备通道配置",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
             if (!_modbusClient.IsOpen)
             {
                 MessageBox.Show("请先连接巡检仪。", "设备通道配置", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -2007,11 +2200,33 @@ namespace UpperComInspectionInstrument2022.Views
                 return;
             }
 
-            InstrumentChannelConfigurationWindow window = new(_modbusClient, _acquisitionService, slaveAddress)
+            CalibrationTaskContext.NormalizeChannelMappings();
+            InstrumentChannelConfigurationWindow window = new(
+                _modbusClient,
+                _acquisitionService,
+                slaveAddress,
+                CalibrationTaskContext.TemperaturePointCount,
+                CalibrationTaskContext.HumidityPointCount,
+                CalibrationTaskContext.TemperatureChannelMapping,
+                CalibrationTaskContext.HumidityChannelMapping)
             {
                 Owner = Window.GetWindow(this)
             };
-            window.ShowDialog();
+            if (window.ShowDialog() == true && window.HasAppliedTaskMapping)
+            {
+                CalibrationTaskContext.TemperatureChannelMapping = window.AppliedTemperatureMapping.ToList();
+                CalibrationTaskContext.HumidityChannelMapping = window.AppliedHumidityMapping.ToList();
+                CalibrationTaskContext.Save();
+                RefreshTaskContext();
+                StatusTextBlock.Text = "任务测点绑定与巡检仪通道使能已同步保存，可以开始实时测量。";
+                WriteRuntime(
+                    "信息",
+                    "设备通道配置",
+                    "任务绑定与设备使能已同步",
+                    MeasurementChannelMappingService.FormatSummary(
+                        CalibrationTaskContext.TemperatureChannelMapping,
+                        CalibrationTaskContext.HumidityChannelMapping));
+            }
             UpdateConnectionStatus();
         }
 

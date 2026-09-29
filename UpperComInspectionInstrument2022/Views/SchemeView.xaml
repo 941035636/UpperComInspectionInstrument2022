@@ -29,7 +29,7 @@
             </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer x:Name="TaskScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="28,18,28,24">
                 <Border Background="White" CornerRadius="8" Padding="20" BorderBrush="#D8E0EA" BorderThickness="1">
                     <StackPanel>
@@ -142,9 +142,13 @@
                                 <ColumnDefinition Width="120"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="温度空间测点数 *" Style="{StaticResource FieldLabel}"/>
-                            <TextBox x:Name="TemperaturePointCountTextBox" Grid.Column="1" Style="{StaticResource FieldBox}" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
+                            <ComboBox x:Name="TemperaturePointCountComboBox" Grid.Column="1" Style="{StaticResource FieldCombo}"
+                                      SelectionChanged="PointCountComboBox_SelectionChanged"
+                                      ToolTip="按所选规范和容积自动生成；选择自定义布点后可从 1～24 点中选择。"/>
                             <TextBlock Grid.Column="2" x:Name="HumidityPointCountLabel" Text="湿度空间测点数 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/>
-                            <TextBox x:Name="HumidityPointCountTextBox" Grid.Column="3" Style="{StaticResource FieldBox}" ToolTip="按所选规范和容积自动生成；选择自定义布点后可修改。"/>
+                            <ComboBox x:Name="HumidityPointCountComboBox" Grid.Column="3" Style="{StaticResource FieldCombo}"
+                                      SelectionChanged="PointCountComboBox_SelectionChanged"
+                                      ToolTip="按所选规范和容积自动生成；选择自定义布点后可从 1～9 点中选择。"/>
                             <TextBlock Grid.Column="4" Text="温度中心点 *" Style="{StaticResource FieldLabel}" Margin="28,0,0,0"/>
                             <TextBox x:Name="TemperatureCenterPointTextBox" Grid.Column="5" Style="{StaticResource FieldBox}" ToolTip="按规范默认空间布点自动生成；选择自定义布点后可修改。"/>
                         </Grid>
@@ -159,13 +163,11 @@
                             </Grid>
                         </Grid>
                         <Grid Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="通道绑定" Style="{StaticResource FieldLabel}"/>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="设备通道" Style="{StaticResource FieldLabel}"/>
                             <TextBlock x:Name="ChannelMappingSummaryTextBlock" Grid.Column="1" Margin="8,0,12,0" VerticalAlignment="Center"
-                                       Foreground="#475569" TextWrapping="Wrap" Text="默认按 T1→CH1、H1→H1 顺序绑定"/>
-                            <Button Grid.Column="2" Content="配置通道绑定" Click="ConfigureChannelMappingButton_Click"
-                                    Padding="15,7" Background="White" Foreground="#1D4ED8" BorderBrush="#93C5FD"
-                                    ToolTip="将规范逻辑测点绑定到实际接线的巡检仪物理接口"/>
+                                       Foreground="#475569" TextWrapping="Wrap"
+                                       Text="保存任务后，在校准工作台的“设备通道配置”中选择实际接线接口并同步设备使能。"/>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

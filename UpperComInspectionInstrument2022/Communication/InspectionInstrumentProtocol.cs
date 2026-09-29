@@ -5,7 +5,7 @@ namespace UpperComInspectionInstrument2022.Communication
     /// <summary>
     /// 当前巡检仪硬件和最新版 Modbus 协议共同确定的通道边界。
     /// 协议为后续型号预留了 50 路温度和 10 路湿度测量地址，
-    /// 当前设备实际安装 24 路温度接口和 9 路湿度接口，因此业务界面和采集请求只使用实际接口。
+    /// 当前设备实际安装 24 路温度接口和 9 路湿度接口，因此业务界面和采集请求只使用实际接口。读取15个温度通道：01 03 00 01 00 1E 94 02
     /// </summary>
     public static class InspectionInstrumentProtocol
     {
@@ -33,6 +33,9 @@ namespace UpperComInspectionInstrument2022.Communication
         /// <summary>物理通道 1～33 的使能配置起始地址；25～33 对应湿度接口 H1～H9。</summary>
         public const ushort ChannelEnableStartAddress = 0x015E;
 
+        /// <summary>巡检仪剩余电池电量保持寄存器；协议值按 0～100 的百分比显示。</summary>
+        public const ushort RemainingBatteryLevelAddress = 0x017F;
+
         /// <summary>设备采集运行状态：0 表示停止，1 表示正在采集。</summary>
         public const ushort AcquisitionRunningStateCoilAddress = 0x0000;
 
@@ -47,6 +50,11 @@ namespace UpperComInspectionInstrument2022.Communication
 
         /// <summary>读取运行状态及启动命令回显所使用的短超时。</summary>
         public const int RunStateResponseTimeoutMilliseconds = 800;
+
+        /// <summary>
+        /// 电量变化缓慢，状态读取只尝试一次短事务；失败不应打断实时测量。
+        /// </summary>
+        public const int BatteryStatusResponseTimeoutMilliseconds = 800;
 
         /// <summary>发送启动命令后等待设备恢复传感器扫描的最长时间。</summary>
         public const int StartConfirmationTimeoutMilliseconds = 5000;

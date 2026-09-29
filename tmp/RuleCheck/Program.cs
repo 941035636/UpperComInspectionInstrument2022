@@ -13,6 +13,19 @@ static void Assert(bool condition, string message)
     if (!condition) throw new InvalidOperationException(message);
 }
 
+static void AssertThrows<TException>(Action action, string message) where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+    throw new InvalidOperationException(message);
+}
+
 CalibrationStandardRule smallChamber = CalibrationStandardRuleService.GetRule(0, 0, true);
 Assert(smallChamber.TemperaturePointCount == 9 && smallChamber.HumidityPointCount == 3, "JJF1101 small point count");
 Assert(smallChamber.TemperatureCenterPoint == 5 && smallChamber.SampleCount == 16 && smallChamber.SampleIntervalSeconds == 120, "JJF1101 small plan");
@@ -204,9 +217,13 @@ Assert(InspectionInstrumentProtocol.CompatibleHumidityBlockRegisterCount == 20,
     "Qt-compatible humidity block contains twenty registers");
 Assert(InspectionInstrumentProtocol.SensorTypeStartAddress == 0x0146 &&
        InspectionInstrumentProtocol.ChannelEnableStartAddress == 0x015E &&
+       InspectionInstrumentProtocol.RemainingBatteryLevelAddress == 0x017F &&
        InspectionInstrumentProtocol.ConfigurationModeCoilAddress == 0x0001 &&
        InspectionInstrumentProtocol.SaveConfigurationCoilAddress == 0x0005,
-    "latest protocol channel-configuration register and coil addresses");
+    "latest protocol channel-configuration, battery register and coil addresses");
+Assert(InspectionInstrumentStatusService.DecodeRemainingBatteryPercentage(75) == 75 &&
+       InspectionInstrumentStatusService.DecodeRemainingBatteryPercentage(0x4B00) == 75,
+    "remaining battery percentage supports standard and low-byte-first register values");
 Assert(InspectionInstrumentProtocol.ConfigurableSensorTypeChannelCount == 24 &&
        InspectionInstrumentProtocol.ConfigurableEnableChannelCount == 33,
     "current hardware exposes 24 temperature types and 33 enable states");
@@ -253,7 +270,86 @@ Assert(InspectionInstrumentConfigurationService.DecodeConfigurationRegister(0x01
 Assert(InspectionInstrumentConfigurationService.EncodeConfigurationRegister(1, true) == 0x0100 &&
        InspectionInstrumentConfigurationService.EncodeConfigurationRegister(13, true) == 0x0D00 &&
        InspectionInstrumentConfigurationService.EncodeConfigurationRegister(1, false) == 0x0001,
-    "device configuration writes preserve the detected register payload byte order");
+    "configuration snapshots preserve the detected read-response byte order");
+Assert(InspectionInstrumentConfigurationService.EncodeConfigurationWriteValue(1) == 0x0001 &&
+       InspectionInstrumentConfigurationService.EncodeConfigurationWriteValue(13) == 0x000D,
+    "function-code 06 configuration writes always use standard Modbus register order");
+using (var cancelledConfigurationRead = new CancellationTokenSource())
+using (var unopenedConfigurationClient = new ModbusRtuClient())
+{
+    cancelledConfigurationRead.Cancel();
+    bool cancellationObserved = false;
+    try
+    {
+        _ = new InspectionInstrumentConfigurationService(unopenedConfigurationClient)
+            .Read(1, cancelledConfigurationRead.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        cancellationObserved = true;
+    }
+    Assert(cancellationObserved,
+        "channel configuration read honors cancellation before issuing another serial request");
+}
+var retryableConfigurationWriteError = new InspectionInstrumentConfigurationWriteException(
+    "preflight communication failure",
+    canRetryWithCurrentSnapshot: true,
+    deviceMayHaveChanged: false,
+    new TimeoutException());
+Assert(retryableConfigurationWriteError.CanRetryWithCurrentSnapshot &&
+       !retryableConfigurationWriteError.DeviceMayHaveChanged,
+    "a communication failure before the first configuration write keeps the snapshot retryable");
+var uncertainConfigurationWriteError = new InspectionInstrumentConfigurationWriteException(
+    "write result uncertain",
+    canRetryWithCurrentSnapshot: false,
+    deviceMayHaveChanged: true,
+    new InvalidOperationException());
+Assert(!uncertainConfigurationWriteError.CanRetryWithCurrentSnapshot &&
+       uncertainConfigurationWriteError.DeviceMayHaveChanged,
+    "a failure after configuration writing starts must invalidate the previous snapshot");
+MethodInfo trendRangeMethod = typeof(UpperComInspectionInstrument2022.Views.RealTimeMeasurementPage)
+    .GetMethod("TryCalculateRange", BindingFlags.NonPublic | BindingFlags.Static) ??
+    throw new InvalidOperationException("trend range calculator missing");
+object?[] incompleteTrendArguments = { new List<double> { 20.0, 20.1 }, 5, 0d };
+bool incompleteTrendAccepted = (bool)(trendRangeMethod.Invoke(null, incompleteTrendArguments) ?? false);
+Assert(!incompleteTrendAccepted,
+    "stability preview must reject fewer than five complete samples instead of reporting zero or infinity");
+object?[] completeTrendArguments = { new List<double> { 20.0, 20.1, 19.9, 20.05, 20.0 }, 5, 0d };
+bool completeTrendAccepted = (bool)(trendRangeMethod.Invoke(null, completeTrendArguments) ?? false);
+Assert(completeTrendAccepted && Math.Abs((double)completeTrendArguments[2]! - 0.2) < 0.000001,
+    "stability preview range uses the maximum minus minimum of five complete samples");
+InspectionInstrumentConfiguration suspiciousMixedConfiguration = new()
+{
+    TemperatureSensorTypes = Enumerable.Repeat((ushort)1, 24).ToArray(),
+    ChannelEnabled = Enumerable.Repeat(true, 33).ToArray(),
+    SensorTypeRegisterLowByteFirst = Enumerable.Repeat(true, 24).ToArray(),
+    EnableRegisterLowByteFirst = Enumerable.Repeat(true, 29).Concat(Enumerable.Repeat(false, 4)).ToArray(),
+    SensorTypeRegistersUseLowByteFirst = true,
+    EnableRegistersUseLowByteFirst = true,
+    InvalidSensorTypeRegisters = new bool[24],
+    InvalidEnableRegisters = new bool[33]
+};
+Assert(suspiciousMixedConfiguration.HasNonCanonicalRegisterOrder &&
+       suspiciousMixedConfiguration.HasRegistersNeedingRepair,
+    "mixed H6-H9 readback order must be offered for repair instead of being treated as a no-op");
+bool[] channelEnableMask = Enumerable.Repeat(true, InspectionInstrumentProtocol.ConfigurableEnableChannelCount).ToArray();
+for (int humidity = 6; humidity <= 9; humidity++)
+    channelEnableMask[InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + humidity - 1] = false;
+List<InspectionChannelData> retainedRegisterValues = new()
+{
+    new() { Channel = 5, PhysicalChannel = 5, Role = ChannelRole.Humidity, Type = ChannelType.Humidity, Value = 15.75, IsValid = true, DataStatus = DataStatus.Valid },
+    new() { Channel = 6, PhysicalChannel = 6, Role = ChannelRole.Humidity, Type = ChannelType.Humidity, Value = 51.65, IsValid = true, DataStatus = DataStatus.Valid },
+    new() { Channel = 6, PhysicalChannel = 6, Role = ChannelRole.HumidityProbeTemperature, Type = ChannelType.Temperature, Value = 20, IsValid = true, DataStatus = DataStatus.Valid }
+};
+MeasurementChannelEnableService.Apply(retainedRegisterValues, channelEnableMask);
+Assert(retainedRegisterValues[0].IsValid && retainedRegisterValues[0].DataStatus == DataStatus.Valid &&
+       !retainedRegisterValues[1].IsValid && retainedRegisterValues[1].DataStatus == DataStatus.Disabled &&
+       !retainedRegisterValues[2].IsValid && retainedRegisterValues[2].DataStatus == DataStatus.Disabled &&
+       retainedRegisterValues[1].Value == 51.65,
+    "disabled humidity channels and probe temperatures must retain raw trace values but never enter realtime or calibration calculations");
+Assert(MeasurementChannelEnableService.FormatDisabledChannels(channelEnableMask).Contains("H6", StringComparison.Ordinal) &&
+       MeasurementChannelEnableService.FormatDisabledChannels(channelEnableMask).Contains("H9", StringComparison.Ordinal),
+    "disabled channel summary identifies H6-H9");
 ushort mixedStandard = InspectionInstrumentConfigurationService.DecodeConfigurationRegisterAutomatically(
     0x0001, 1, out bool mixedStandardUsesLowByteFirst);
 ushort mixedLowByteFirst = InspectionInstrumentConfigurationService.DecodeConfigurationRegisterAutomatically(
@@ -929,6 +1025,41 @@ Assert(normalizedTemperatureMapping.SequenceEqual(new[] { 7, 2, 1, 3 }),
 Assert(MeasurementChannelMappingService.GetRequiredReadChannelCount(
            new[] { 7, 2 }, 2, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount) == 7,
     "sparse mapping reads one contiguous block through the highest physical channel");
+
+int[] replacementTemperatureMapping = { 16, 17, 18, 19, 20 };
+Assert(MeasurementChannelMappingService.GetRequiredReadChannelCount(
+           replacementTemperatureMapping, 5, InspectionInstrumentProtocol.PhysicalTemperatureChannelCount) == 20,
+    "five logical points remapped to CH16-CH20 read through physical CH20");
+bool[] taskDrivenEnableState = MeasurementChannelMappingService.BuildDeviceEnableState(
+    replacementTemperatureMapping,
+    new[] { 6, 7 });
+Assert(taskDrivenEnableState.Length == InspectionInstrumentProtocol.ConfigurableEnableChannelCount &&
+       taskDrivenEnableState.Skip(15).Take(5).All(enabled => enabled) &&
+       taskDrivenEnableState[InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + 5] &&
+       taskDrivenEnableState[InspectionInstrumentProtocol.PhysicalTemperatureChannelCount + 6] &&
+       taskDrivenEnableState.Count(enabled => enabled) == 7,
+    "task mappings enable only CH16-CH20 and H6-H7 while every unbound device channel remains closed");
+AssertThrows<ArgumentException>(
+    () => MeasurementChannelMappingService.BuildDeviceEnableState(new[] { 1, 1 }, Array.Empty<int>()),
+    "duplicate physical bindings must be rejected instead of generating an ambiguous device enable state");
+List<InspectionChannelData> replacementPhysicalSource = Enumerable.Range(1, 20)
+    .Select(channel => new InspectionChannelData
+    {
+        Channel = channel,
+        PhysicalChannel = channel,
+        Role = ChannelRole.PrimaryTemperature,
+        Type = ChannelType.Temperature,
+        Value = 100 + channel,
+        IsValid = true
+    })
+    .ToList();
+List<InspectionChannelData> replacementLogicalPoints = MeasurementChannelMappingService.ApplyTaskMapping(
+    replacementPhysicalSource, replacementTemperatureMapping, Array.Empty<int>());
+Assert(replacementLogicalPoints.Count == 5 &&
+       replacementLogicalPoints.Select(item => item.Channel).SequenceEqual(new[] { 1, 2, 3, 4, 5 }) &&
+       replacementLogicalPoints.Select(item => item.PhysicalChannel).SequenceEqual(replacementTemperatureMapping) &&
+       replacementLogicalPoints.Select(item => item.Value).SequenceEqual(new[] { 116d, 117d, 118d, 119d, 120d }),
+    "failed CH1-CH5 can be replaced by CH16-CH20 while calculations retain logical T1-T5 order");
 
 List<InspectionChannelData> physicalMappedSource = new()
 {
