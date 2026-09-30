@@ -86,6 +86,9 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>是否已经完成“设备使能确认 + 任务绑定确认”的联合保存。</summary>
         public bool HasAppliedTaskMapping { get; private set; }
 
+        /// <summary>联合保存完成后通知工作台立即持久化已确认的任务测点绑定。</summary>
+        public event EventHandler? TaskMappingApplied;
+
         private async void ReadButton_Click(object sender, RoutedEventArgs e)
         {
             if (!CanConfigure()) return;
@@ -196,7 +199,7 @@ namespace UpperComInspectionInstrument2022.Views
                     {
                         CompleteJointSave(temperatureMapping, humidityMapping);
                         SetStatus("设备使能已与任务绑定一致，无需重复写入；任务绑定已保存。", false);
-                        ShowSaveResultAndClose(
+                        ShowSaveResult(
                             "保存成功。\n\n任务测点绑定已保存；设备通道使能与目标一致，无需重复写入。",
                             false);
                     }
@@ -307,13 +310,13 @@ namespace UpperComInspectionInstrument2022.Views
                 SetBusy(false);
                 if (string.IsNullOrWhiteSpace(saved.CommunicationWarning))
                 {
-                    ShowSaveResultAndClose(
+                    ShowSaveResult(
                         "保存成功。\n\n任务测点绑定已保存；设备通道使能已写入并回读确认；巡检仪采集状态已恢复。",
                         false);
                 }
                 else
                 {
-                    ShowSaveResultAndClose(
+                    ShowSaveResult(
                         "设备通道配置已写入并回读，任务测点绑定已保存，但存在以下提示：\n\n" +
                         saved.CommunicationWarning +
                         "\n\n请按提示确认设备状态。",
@@ -498,24 +501,24 @@ namespace UpperComInspectionInstrument2022.Views
             return $"本次任务绑定将自动开启：{openingText}\n将自动关闭未绑定通道：{closingText}";
         }
 
-        /// <summary>只在设备使能保存成功后冻结本次任务映射，交由工作台写入任务文件。</summary>
+        /// <summary>只在设备使能保存成功后冻结本次任务映射，并通知工作台立即写入任务文件。</summary>
         private void CompleteJointSave(IReadOnlyList<int> temperatureMapping, IReadOnlyList<int> humidityMapping)
         {
             _appliedTemperatureMapping = temperatureMapping.ToArray();
             _appliedHumidityMapping = humidityMapping.ToArray();
             HasAppliedTaskMapping = true;
+            TaskMappingApplied?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>向用户明确反馈联合保存结果，确认后再关闭配置窗口。</summary>
-        private void ShowSaveResultAndClose(string message, bool warning)
+        /// <summary>反馈联合保存结果，但保留配置窗口，便于用户立即重新读取设备进行复核。</summary>
+        private void ShowSaveResult(string message, bool warning)
         {
             MessageBox.Show(
                 this,
-                message,
+                message + "\n\n配置窗口将保留，您可以点击“读取设备配置”再次核对；确认无误后再手动关闭。",
                 warning ? "保存完成（有提示）" : "保存成功",
                 MessageBoxButton.OK,
                 warning ? MessageBoxImage.Warning : MessageBoxImage.Information);
-            DialogResult = true;
         }
 
         private static bool HasUniqueMappings(IReadOnlyCollection<int> mapping) =>

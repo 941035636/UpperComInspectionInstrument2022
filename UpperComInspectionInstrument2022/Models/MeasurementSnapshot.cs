@@ -11,10 +11,11 @@ namespace UpperComInspectionInstrument2022.Models
     /// </summary>
     public class MeasurementSnapshot
     {
-        /// <summary>
-        /// 采集序号
-        /// </summary>
+        /// <summary>底层采集请求追溯号。跨暂停和清空保持递增，用于日志及原始文件关联。</summary>
         public long Sequence { get; set; }
+
+        /// <summary>当前工作台内的显示序号。清空数据后归零，下一次成功采集从1重新开始。</summary>
+        public long DisplaySequence { get; set; }
 
         /// <summary>
         /// 本次采集时间

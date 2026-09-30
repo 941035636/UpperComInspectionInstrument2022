@@ -543,7 +543,7 @@ namespace UpperComInspectionInstrument2022.Views
         {
             if (_measurementTable.Columns.Count < 3) return;
             DataRow row = _measurementTable.NewRow();
-            row["采集序号"] = snapshot.Sequence;
+            row["采集序号"] = snapshot.DisplaySequence;
             row["采集时间"] = snapshot.Timestamp.ToString("HH:mm:ss");
             foreach (DataColumn column in _measurementTable.Columns)
             {
@@ -672,6 +672,7 @@ namespace UpperComInspectionInstrument2022.Views
             _deviceTransitionInProgress = true;
             ConnectDeviceButton.IsEnabled = false;
             StartAcquisitionButton.IsEnabled = false;
+            ClearDataButton.IsEnabled = false;
             ChannelConfigurationButton.IsEnabled = false;
             bool realtimeSessionStarted = false;
             try
@@ -824,6 +825,7 @@ namespace UpperComInspectionInstrument2022.Views
                 {
                     ConnectDeviceButton.IsEnabled = true;
                     StartAcquisitionButton.IsEnabled = _modbusClient.IsOpen;
+                    ClearDataButton.IsEnabled = true;
                 }
             }
         }
@@ -1175,6 +1177,7 @@ namespace UpperComInspectionInstrument2022.Views
             StopAcquisitionButton.IsEnabled = false;
             StartAcquisitionButton.IsEnabled = false;
             ConnectDeviceButton.IsEnabled = false;
+            ClearDataButton.IsEnabled = false;
             StatusTextBlock.Text = "正在暂停，等待当前巡检仪请求结束…";
             PublishGlobalRunStatus("正在安全停止巡检仪请求…", GlobalRunStatusTone.Warning);
             string storageWarning = string.Empty;
@@ -1205,6 +1208,7 @@ namespace UpperComInspectionInstrument2022.Views
             StartAcquisitionButton.IsEnabled = _modbusClient.IsOpen;
             StopAcquisitionButton.IsEnabled = false;
             ConnectDeviceButton.IsEnabled = true;
+            ClearDataButton.IsEnabled = true;
             PortComboBox.IsEnabled = true;
             BaudRateComboBox.IsEnabled = true;
             SetExecutionParametersEnabled(true);
@@ -1232,15 +1236,24 @@ namespace UpperComInspectionInstrument2022.Views
                 MessageBox.Show(acquisitionStopWarning, "暂停采集异常", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
-        /// <summary>经用户确认后清空工作台实时快照和正式样本，但保持当前设备连接状态。</summary>
+        /// <summary>暂停后清空工作台实时快照和正式样本，并把本次显示序号重置为零。</summary>
         private void ClearDataButton_Click(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("确定清空当前校准工作台的所有采集快照吗？", "确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            if (_acquisitionService.IsRunning)
+            {
+                MessageBox.Show("请先暂停实时测量，再清空数据。", "采集正在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (MessageBox.Show(
+                    "确定清空当前工作台的矩阵、趋势和正式样本，并将本次采集序号重置吗？\n\n已经写入本地的 CSV 文件不会删除。",
+                    "确认清空数据",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             if (_calibrationRunning &&
                 !CalibrationFileStorageService.Default.TryMarkInterrupted("操作人员清空了当前工作台数据", out string storageWarning))
                 MessageBox.Show(storageWarning, "本地作业状态未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             ResetMeasurementDisplay("实时数据已清空，采集连接保持当前状态", false);
-            WriteOperation("清空工作台显示", "成功", "仅清空内存矩阵和趋势，不删除已落盘 CSV", CalibrationFileStorageService.Default.CurrentJobDirectory ?? string.Empty);
+            WriteOperation("清空工作台显示", "成功", "清空内存矩阵和趋势，本次显示序号归零，不删除已落盘 CSV", CalibrationFileStorageService.Default.CurrentJobDirectory ?? string.Empty);
         }
 
         /// <summary>统一重置矩阵、曲线、摘要和正式采样状态，并可选择同时重置设备响应标志。</summary>
@@ -1319,6 +1332,7 @@ namespace UpperComInspectionInstrument2022.Views
                 MeasurementSnapshot snapshot = new MeasurementSnapshot
                 {
                     Sequence = acquisitionId,
+                    DisplaySequence = _viewModel.AcquisitionCount + 1,
                     Timestamp = DateTime.Now,
                     Channels = new List<InspectionChannelData>(data),
                     ValidChannelCount = validCount,
@@ -1490,7 +1504,7 @@ namespace UpperComInspectionInstrument2022.Views
         /// <summary>更新当前值、有效通道质量、中心点值和异常详情提示。</summary>
         private void UpdateMeasurementSummary(MeasurementSnapshot snapshot)
         {
-            CurrentSequenceTextBlock.Text = snapshot.Sequence.ToString();
+            CurrentSequenceTextBlock.Text = snapshot.DisplaySequence.ToString();
             CurrentTimeTextBlock.Text = snapshot.Timestamp.ToString("HH:mm:ss");
             int temperaturePointCount = HasTemperatureMode() ? GetPointCount(TemperaturePointCountComboBox) : 0;
             int humidityPointCount = HasHumidityMode() ? GetPointCount(HumidityPointCountComboBox) : 0;
@@ -1757,7 +1771,7 @@ namespace UpperComInspectionInstrument2022.Views
                 double humidity = FindTrendValue(snapshot, ChannelType.Humidity, humidityCenter, humidityPointCount);
                 temperatures.Add(temperature);
                 humidities.Add(humidity);
-                _visibleTrendSamples.Add(new TrendSample(snapshot.Sequence, snapshot.Timestamp, temperature, humidity));
+                _visibleTrendSamples.Add(new TrendSample(snapshot.DisplaySequence, snapshot.Timestamp, temperature, humidity));
             }
 
             bool showTemperature = temperaturePointCount > 0;
@@ -2212,7 +2226,7 @@ namespace UpperComInspectionInstrument2022.Views
             {
                 Owner = Window.GetWindow(this)
             };
-            if (window.ShowDialog() == true && window.HasAppliedTaskMapping)
+            window.TaskMappingApplied += (_, _) =>
             {
                 CalibrationTaskContext.TemperatureChannelMapping = window.AppliedTemperatureMapping.ToList();
                 CalibrationTaskContext.HumidityChannelMapping = window.AppliedHumidityMapping.ToList();
@@ -2226,7 +2240,8 @@ namespace UpperComInspectionInstrument2022.Views
                     MeasurementChannelMappingService.FormatSummary(
                         CalibrationTaskContext.TemperatureChannelMapping,
                         CalibrationTaskContext.HumidityChannelMapping));
-            }
+            };
+            window.ShowDialog();
             UpdateConnectionStatus();
         }
 

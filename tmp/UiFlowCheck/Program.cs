@@ -366,6 +366,16 @@ internal static class Program
             !workbenchCode.Contains("湿度探头伴随温度（诊断，不参与校准）", StringComparison.Ordinal) ||
             !workbenchCode.Contains("ToString(\"F2\", CultureInfo.InvariantCulture)", StringComparison.Ordinal))
             throw new InvalidOperationException("negative humidity and probe-temperature diagnostics should remain visible to the operator");
+        if (!workbenchCode.Contains("DisplaySequence = _viewModel.AcquisitionCount + 1", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("row[\"采集序号\"] = snapshot.DisplaySequence", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CurrentSequenceTextBlock.Text = snapshot.DisplaySequence.ToString()", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("请先暂停实时测量，再清空数据", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("本次采集序号重置", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("已经写入本地的 CSV 文件不会删除", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("ClearDataButton.IsEnabled = false", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("ClearDataButton.IsEnabled = true", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "clearing paused realtime data must reset only the user-facing sequence while preserving trace files");
         if (!workbenchCode.Contains("ChannelCorrectionService.ApplyForMeasurement", StringComparison.Ordinal) ||
             !workbenchCode.Contains("MeasurementChannelEnableService.Apply(data, _activeChannelEnabled)", StringComparison.Ordinal) ||
             !workbenchCode.Contains("_channelProfileService.TryLoad", StringComparison.Ordinal) ||
@@ -505,7 +515,11 @@ internal static class Program
             !configurationWindowCode.Contains("可疑旧字节序，保存后修复", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("TryBuildDesiredChannelState", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("CompleteJointSave", StringComparison.Ordinal) ||
-            !configurationWindowCode.Contains("ShowSaveResultAndClose", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("TaskMappingApplied?.Invoke", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("ShowSaveResult", StringComparison.Ordinal) ||
+            configurationWindowCode.Contains("ShowSaveResultAndClose", StringComparison.Ordinal) ||
+            configurationWindowCode.Contains("DialogResult = true", StringComparison.Ordinal) ||
+            !configurationWindowCode.Contains("配置窗口将保留", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("保存成功。", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("保存完成（有提示）", StringComparison.Ordinal) ||
             !configurationWindowCode.Contains("其余物理通道自动关闭", StringComparison.Ordinal) ||
@@ -520,6 +534,12 @@ internal static class Program
             !configurationWindowCode.Contains("_profileService.TrySave", StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "task mapping must drive device enables in the unified configuration window while reads remain cancellable and writes protected");
+        if (!workbenchCode.Contains("window.TaskMappingApplied +=", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("CalibrationTaskContext.Save();", StringComparison.Ordinal) ||
+            !workbenchCode.Contains("window.ShowDialog();", StringComparison.Ordinal) ||
+            workbenchCode.Contains("window.ShowDialog() == true", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "successful channel mappings must be persisted immediately while the configuration window remains open");
         string channelProfileServiceCode = File.ReadAllText(Path.Combine(
             "UpperComInspectionInstrument2022", "Services", "InspectionInstrumentChannelProfileService.cs"));
         if (!channelProfileServiceCode.Contains("instrument-channel-profiles.json", StringComparison.Ordinal) ||
